@@ -1,8 +1,12 @@
+# Python Virtual Environment
 venv/
+.venv/
 __pycache__/
-*.db
-*.mp4
-*.m4a
-*.jpg
-*.webp
+*.pyc
+
+# Local Database & Media Files
 downloads/
+*.db
+
+# Secrets & Environment Variables
+.env

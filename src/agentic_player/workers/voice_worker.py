@@ -2,34 +2,38 @@ import zmq
 import sounddevice as sd
 import numpy as np
 import whisper
+from faster_whisper import WhisperModel
 import scipy.io.wavfile as wav
 import tempfile
 import os
+import torch
 
 def start_voice_worker():
     context = zmq.Context()
     
-    # Port 5560: PTT Commands
     ui_socket = context.socket(zmq.PULL)
     ui_socket.bind("tcp://127.0.0.1:5560")
     
-    # Port 5561: Hardware Settings Broadcasts
     config_socket = context.socket(zmq.SUB)
     config_socket.connect("tcp://127.0.0.1:5561")
     config_socket.setsockopt_string(zmq.SUBSCRIBE, "")
     
-    # Port 5555: Route text to AI
     router_socket = context.socket(zmq.PUSH)
     router_socket.connect("tcp://127.0.0.1:5555")
 
-    # The Poller allows us to listen to UI and Config simultaneously
     poller = zmq.Poller()
     poller.register(ui_socket, zmq.POLLIN)
     poller.register(config_socket, zmq.POLLIN)
 
-    print("[*] Loading Whisper model (multilingual base)...")
-    model = whisper.load_model("base")
-    print("[*] Voice Worker started. Listening for commands and config updates...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[*] Loading STT Models on {device.upper()}...")
+    
+    model_whisper = whisper.load_model("base")
+    compute_type = "float16" if device == "cuda" else "int8"
+    model_faster = WhisperModel("small", device=device, compute_type=compute_type)
+    
+    current_engine = "Whisper (Base)"
+    print("[*] Voice Worker ready.")
 
     is_recording = False
     audio_data = []
@@ -44,33 +48,32 @@ def start_voice_worker():
     def start_audio_stream(device_id):
         nonlocal stream
         if stream is not None:
-            stream.close()  # Close the old hardware stream
+            stream.close()
         try:
             stream = sd.InputStream(samplerate=sample_rate, channels=1, 
                                     device=device_id, callback=audio_callback)
             stream.start()
-            dev_name = device_id if device_id is not None else "System Default"
-            print(f"[*] Microphone stream active on Device ID: {dev_name}")
         except Exception as e:
             print(f"[!] Failed to open microphone: {e}")
 
-    # Start the initial stream with the OS default
     start_audio_stream(current_mic_id)
 
     while True:
-        socks = dict(poller.poll())
+        socks = dict(poller.poll(100))
 
-        # --- 1. HANDLE HARDWARE UPDATES ---
         if config_socket in socks:
             msg = config_socket.recv_json()
             if msg.get("type") == "hardware_update":
                 new_mic_id = msg["config"].get("mic_device_id")
                 if new_mic_id != current_mic_id:
-                    print(f"\n[*] Hardware Update: Swapping Microphone to ID {new_mic_id}")
                     current_mic_id = new_mic_id
                     start_audio_stream(current_mic_id)
+            elif msg.get("type") == "inference_toggle":
+                engine = msg["config"].get("stt_engine")
+                if engine and engine != current_engine:
+                    print(f"\n[*] Swapping STT Engine to: {engine}")
+                    current_engine = engine
 
-        # --- 2. HANDLE PUSH-TO-TALK ---
         if ui_socket in socks:
             message = ui_socket.recv_json()
             action = message.get("action")
@@ -82,23 +85,27 @@ def start_voice_worker():
 
             elif action == "stop":
                 is_recording = False
-                print("[🎤] Recording stopped. Transcribing...")
+                print(f"[🎤] Transcribing with {current_engine}...")
                 
                 if len(audio_data) > 0:
                     recording = np.concatenate(audio_data, axis=0)
                     volume_level = np.max(np.abs(recording))
-                    print(f"[*] Max volume level: {volume_level:.4f}")
                     
                     if volume_level < 0.001:
-                        print("[!] WARNING: Audio is silent. Try changing your mic in the UI Settings.")
+                        print("[!] WARNING: Audio is silent.")
                     else:
                         temp_wav = os.path.join(tempfile.gettempdir(), "ptt_command.wav")
                         wav.write(temp_wav, sample_rate, recording)
                         
-                        result = model.transcribe(temp_wav, fp16=False)
-                        text = result["text"].strip()
-                        
-                        print(f"[Whisper heard]: {text}")
+                        text = ""
+                        if current_engine == "Faster-Whisper (Small)":
+                            segments, _ = model_faster.transcribe(temp_wav, beam_size=5)
+                            text = " ".join([s.text for s in segments]).strip()
+                        else:
+                            result = model_whisper.transcribe(temp_wav, fp16=False)
+                            text = result["text"].strip()
+                            
+                        print(f"[{current_engine} heard]: {text}")
                         if text:
                             router_socket.send_json({"type": "chat", "text": text})
 

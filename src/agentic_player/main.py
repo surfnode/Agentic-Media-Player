@@ -1,4 +1,6 @@
 import sys
+import os
+import sqlite3
 import zmq
 import sounddevice as sd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, 
@@ -6,6 +8,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget,
                                QPushButton, QLabel, QDialog, QFormLayout, QComboBox, 
                                QDialogButtonBox, QCheckBox)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtSql import QSqlDatabase
 
 from agentic_player.core.db_manager import DatabaseManager
@@ -43,8 +46,8 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         
-        layout.addRow("Microphone (Whisper STT):", self.mic_combo)
-        layout.addRow("Speaker (Bark TTS):", self.spk_combo)
+        layout.addRow("Microphone Input:", self.mic_combo)
+        layout.addRow("Speaker Output:", self.spk_combo)
         layout.addWidget(buttons)
         
     def get_selected_devices(self):
@@ -88,6 +91,23 @@ class AgenticPlayerWindow(QMainWindow):
 
     def send_play_command(self, file_path):
         self.cmd_socket.send_json({"action": "play", "file_path": file_path})
+        
+        with sqlite3.connect(self.db_manager.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT thumbnail_path, title FROM tracks WHERE file_path=?", (file_path,))
+            result = cursor.fetchone()
+            
+            if result and result[0] and os.path.exists(result[0]):
+                pixmap = QPixmap(result[0])
+                self.central_widget.setPixmap(pixmap.scaled(
+                    self.central_widget.size(), 
+                    Qt.KeepAspectRatio, 
+                    Qt.SmoothTransformation
+                ))
+            else:
+                title = result[1] if result else "Unknown Track"
+                self.central_widget.clear()
+                self.central_widget.setText(f"🎵 Playing: {title}")
 
     def send_transport_command(self, action):
         self.cmd_socket.send_json({"action": action})
@@ -120,7 +140,12 @@ class AgenticPlayerWindow(QMainWindow):
         self.ptt_button.setEnabled(stt_active)
         self.config_pub_socket.send_json({
             "type": "inference_toggle",
-            "config": {"stt_enabled": stt_active, "tts_enabled": tts_active}
+            "config": {
+                "stt_enabled": stt_active, 
+                "tts_enabled": tts_active,
+                "stt_engine": self.stt_combo.currentText(),
+                "tts_engine": self.tts_combo.currentText()
+            }
         })
 
     def open_settings(self):
@@ -133,19 +158,22 @@ class AgenticPlayerWindow(QMainWindow):
             self.spk_status_label.setText(f"🔊 Out: {spk_disp[:25]}")
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
 
+    def closeEvent(self, event):
+        print("[*] Shutting down ZMQ Bridge gracefully...")
+        self.zmq_bridge.stop()
+        event.accept()
+
     def _setup_ui(self):
         self.central_widget = QLabel("Stage (Album Art / Audio Visualizer)", alignment=Qt.AlignCenter)
         self.central_widget.setStyleSheet("background-color: #1e1e2e; color: #cdd6f4; font-size: 20px;")
         self.setCentralWidget(self.central_widget)
 
-        # Left Dock: Library
         left_dock = QDockWidget("Library", self)
         left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.library_widget = LibraryWidget()
         left_dock.setWidget(self.library_widget)
         self.addDockWidget(Qt.LeftDockWidgetArea, left_dock)
 
-        # Right Dock: Agent Terminal
         right_dock = QDockWidget("Agent Terminal", self)
         right_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         agent_container = QWidget()
@@ -166,20 +194,30 @@ class AgenticPlayerWindow(QMainWindow):
         input_layout.addWidget(self.text_input)
         input_layout.addWidget(self.send_button)
 
-        # Inference Toggles
+        # NEW: Inference Dropdowns
         toggle_layout = QHBoxLayout()
-        self.stt_toggle = QCheckBox("Voice Input (Whisper)")
+        
+        self.stt_toggle = QCheckBox("STT:")
         self.stt_toggle.setChecked(True)
         self.stt_toggle.toggled.connect(self.on_inference_toggled)
         
-        self.tts_toggle = QCheckBox("Voice Output (Bark)")
+        self.stt_combo = QComboBox()
+        self.stt_combo.addItems(["Whisper (Base)", "Faster-Whisper (Small)"])
+        self.stt_combo.currentIndexChanged.connect(self.on_inference_toggled)
+        
+        self.tts_toggle = QCheckBox("TTS:")
         self.tts_toggle.setChecked(True)
         self.tts_toggle.toggled.connect(self.on_inference_toggled)
         
-        toggle_layout.addWidget(self.stt_toggle)
-        toggle_layout.addWidget(self.tts_toggle)
+        self.tts_combo = QComboBox()
+        self.tts_combo.addItems(["Bark (Heavy)", "Kokoro-82M (Fast)"])
+        self.tts_combo.currentIndexChanged.connect(self.on_inference_toggled)
         
-        # Bottom Mic & Settings
+        toggle_layout.addWidget(self.stt_toggle)
+        toggle_layout.addWidget(self.stt_combo)
+        toggle_layout.addWidget(self.tts_toggle)
+        toggle_layout.addWidget(self.tts_combo)
+        
         bottom_buttons_layout = QHBoxLayout()
         self.ptt_button = QPushButton("🎤 Push to Talk")
         self.ptt_button.setMinimumHeight(45)
@@ -188,9 +226,9 @@ class AgenticPlayerWindow(QMainWindow):
         self.ptt_button.released.connect(self.stop_voice)
         
         status_layout = QVBoxLayout()
-        self.mic_status_label = QLabel("🎤 In: Auto-Detect (System Default)")
+        self.mic_status_label = QLabel("🎤 In: Auto-Detect")
         self.mic_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
-        self.spk_status_label = QLabel("🔊 Out: Auto-Detect (System Default)")
+        self.spk_status_label = QLabel("🔊 Out: Auto-Detect")
         self.spk_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
         status_layout.addWidget(self.mic_status_label)
         status_layout.addWidget(self.spk_status_label)
@@ -211,12 +249,14 @@ class AgenticPlayerWindow(QMainWindow):
         right_dock.setWidget(agent_container)
         self.addDockWidget(Qt.RightDockWidgetArea, right_dock)
 
-        # Bottom Dock: Transport Media Controls
         bottom_dock = QDockWidget("Transport", self)
         bottom_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         transport_container = QWidget()
         transport_layout = QHBoxLayout(transport_container)
         
+        btn_shuffle = QPushButton("🔀 Shuffle")
+        btn_shuffle.setCheckable(True)
+        btn_shuffle.clicked.connect(lambda: self.send_transport_command("toggle_shuffle"))
         btn_prev = QPushButton("⏮ Previous")
         btn_prev.clicked.connect(lambda: self.send_transport_command("prev"))
         btn_play = QPushButton("▶ Play")
@@ -228,7 +268,7 @@ class AgenticPlayerWindow(QMainWindow):
         btn_next = QPushButton("⏭ Next")
         btn_next.clicked.connect(lambda: self.send_transport_command("next"))
 
-        for btn in (btn_prev, btn_play, btn_pause, btn_stop, btn_next):
+        for btn in (btn_shuffle, btn_prev, btn_play, btn_pause, btn_stop, btn_next):
             btn.setMinimumHeight(40)
             btn.setStyleSheet("font-weight: bold; padding: 4px 14px;")
             transport_layout.addWidget(btn)

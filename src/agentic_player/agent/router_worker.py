@@ -5,9 +5,8 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from agentic_player.agent.schemas import AgentResponse
+from agentic_player.agent.schemas import AgentResponse, Command
 
-# FIXED: Force Instructor into pure JSON mode for better local LLM compatibility
 client = instructor.from_litellm(completion, mode=instructor.Mode.JSON)
 
 def start_router():
@@ -26,45 +25,59 @@ def start_router():
     ui_pub_socket.bind("tcp://127.0.0.1:5557")
 
     print("[*] Agent Router started. Listening on Port 5555...")
-    print("[*] Active LLM: granite4.2:8b-q8_0 (JSON Mode)")
+
+    conversation_history = [
+        {
+            "role": "system", 
+            "content": (
+                "You are a conversational AI media player assistant. "
+                "CRITICAL RULE: If a user asks to download music, you MUST know if they want 'audio' or 'video'. "
+                "If they didn't specify in their request, DO NOT issue a download command. Instead, use your spoken_reply to ask: 'Would you like the audio or the video format?'. "
+                "Once they clarify, issue the download command with the correct media_type."
+            )
+        }
+    ]
 
     while True:
         message = in_socket.recv_json()
         user_text = message.get("text", "")
         print(f"\n[User Says]: {user_text}")
 
+        conversation_history.append({"role": "user", "content": user_text})
+        
+        if len(conversation_history) > 13:
+            conversation_history = [conversation_history[0]] + conversation_history[-12:]
+
         try:
             response = client.chat.completions.create(
                 model="ollama/granite4.2:8b-q8_0", 
                 response_model=AgentResponse,
-                messages=[
-                    {"role": "system", "content": "You are an AI media player assistant. Parse the user's intent, reply concisely, and trigger the appropriate tools. Return valid JSON."},
-                    {"role": "user", "content": user_text}
-                ],
+                messages=conversation_history,
                 api_base="http://localhost:11434"
             )
         except Exception as e:
-            print(f"[!] LLM failed: {e}. Falling back to basic routing.")
-            from agentic_player.agent.schemas import Command
+            print(f"[!] LLM failed: {e}. Falling back to regex.")
             cmds = []
-            if "download" in user_text.lower():
-                query = user_text.lower().replace("download", "").strip()
-                cmds.append(Command(action="download", query=query))
-            elif "pause" in user_text.lower():
-                cmds.append(Command(action="pause"))
+            lower_text = user_text.lower()
+            if any(k in lower_text for k in ["download", "get"]):
+                query = user_text.lower().replace("download", "").replace("get", "").strip()
+                mt = "audio" if "audio" in lower_text or "mp3" in lower_text else "video"
+                cmds.append(Command(action="download", query=query if query else user_text, media_type=mt))
             
             response = AgentResponse(
-                spoken_reply="I'm running in offline fallback mode, but executing your command now.",
+                spoken_reply=f"Executing fallback command.",
                 commands=cmds
             )
 
+        conversation_history.append({"role": "assistant", "content": response.spoken_reply})
         ui_pub_socket.send_json({"type": "chat_reply", "value": response.spoken_reply})
 
-        # FIXED: Updated routing logic for the new single Command schema
         for cmd in response.commands:
             if cmd.action == "download" and cmd.query:
-                print(f"[Agent -> Fetcher]: Downloading '{cmd.query}'")
-                fetch_socket.send_json({"action": "download", "query": cmd.query})
+                # Default to video if the AI slips up
+                media_type = getattr(cmd, "media_type", "video") or "video" 
+                print(f"[Agent -> Fetcher]: Downloading '{cmd.query}' as {media_type.upper()}")
+                fetch_socket.send_json({"action": "download", "query": cmd.query, "media_type": media_type})
             elif cmd.action in ["play", "pause", "stop"]:
                 print(f"[Agent -> Player]: Executing '{cmd.action}'")
                 play_socket.send_json({"action": cmd.action})
