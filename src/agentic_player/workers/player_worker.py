@@ -19,6 +19,10 @@ def start_player_worker():
     cmd_socket.setsockopt(zmq.LINGER, 0)
     cmd_socket.bind("tcp://127.0.0.1:5559")
     
+    # Use a poller so we don't block the loop indefinitely waiting for UI commands
+    poller = zmq.Poller()
+    poller.register(cmd_socket, zmq.POLLIN)
+    
     print("[*] VLC Player Worker started. Listening on Port 5559...")
     
     instance = vlc.Instance('--no-xlib --quiet')
@@ -30,88 +34,113 @@ def start_player_worker():
 
     while True:
         try:
-            msg = cmd_socket.recv_json()
-            action = msg.get("action")
-            playlist = get_playlist()
+            # Poll with a 200ms timeout
+            socks = dict(poller.poll(200))
             
-            if action == "play":
-                file_path = msg.get("file_path")
+            if cmd_socket in socks:
+                msg = cmd_socket.recv_json()
+                action = msg.get("action")
+                playlist = get_playlist()
                 
-                # 1. UI explicitly sent a specific track to play
-                if file_path and os.path.exists(file_path):
-                    media = instance.media_new(file_path)
-                    player.set_media(media)
-                    player.play()
-                    if file_path in playlist:
-                        current_track_idx = playlist.index(file_path)
-                    print(f"[*] VLC Playing: {os.path.basename(file_path)}")
-                
-                # 2. Agent or UI sent a generic "Play" command
-                else:
-                    current_state = player.get_state()
+                if action == "play":
+                    file_path = msg.get("file_path")
                     
-                    if current_state == vlc.State.Paused:
+                    # 1. UI explicitly sent a specific track to play
+                    if file_path and os.path.exists(file_path):
+                        player.stop()  # CRITICAL: Free the audio sink before changing media
+                        media = instance.media_new(file_path)
+                        player.set_media(media)
                         player.play()
-                        print("[*] Resumed playback")
-                    elif current_state == vlc.State.Playing:
-                        print("[*] Audio is already playing.")
+                        if file_path in playlist:
+                            current_track_idx = playlist.index(file_path)
+                        print(f"[*] VLC Playing: {os.path.basename(file_path)}")
+                    
+                    # 2. Agent or UI sent a generic "Play" command
                     else:
-                        # Nothing is playing/loaded. Start the library!
-                        if playlist:
-                            if shuffle_mode:
-                                current_track_idx = random.randint(0, len(playlist) - 1)
-                            else:
-                                current_track_idx = 0
-                                
-                            next_track = playlist[current_track_idx]
-                            player.set_media(instance.media_new(next_track))
+                        current_state = player.get_state()
+                        
+                        if current_state == vlc.State.Paused:
                             player.play()
-                            print(f"[*] Started library playback: {os.path.basename(next_track)}")
+                            print("[*] Resumed playback")
+                        elif current_state == vlc.State.Playing:
+                            print("[*] Audio is already playing.")
                         else:
-                            print("[!] Play command received, but library is empty.")
-            
-            elif action == "pause":
-                if player.get_state() == vlc.State.Playing:
-                    player.pause()
-                    print("[*] Paused playback")
-                else:
-                    print("[*] Ignored pause (nothing is currently playing).")
+                            # Nothing is playing/loaded. Start the library!
+                            if playlist:
+                                if shuffle_mode:
+                                    current_track_idx = random.randint(0, len(playlist) - 1)
+                                else:
+                                    current_track_idx = 0
+                                    
+                                next_track = playlist[current_track_idx]
+                                player.stop()
+                                player.set_media(instance.media_new(next_track))
+                                player.play()
+                                print(f"[*] Started library playback: {os.path.basename(next_track)}")
+                            else:
+                                print("[!] Play command received, but library is empty.")
                 
-            elif action == "stop":
-                player.stop()
-                print("[*] Stopped playback")
-                
-            elif action == "next":
-                if not playlist: continue
-                if shuffle_mode:
-                    current_track_idx = random.randint(0, len(playlist) - 1)
-                elif current_track_idx < len(playlist) - 1:
-                    current_track_idx += 1
-                else:
-                    current_track_idx = 0 
-                
-                next_track = playlist[current_track_idx]
-                player.set_media(instance.media_new(next_track))
-                player.play()
-                print(f"[*] Next Track: {os.path.basename(next_track)}")
+                elif action == "pause":
+                    if player.get_state() == vlc.State.Playing:
+                        player.pause()
+                        print("[*] Paused playback")
+                    else:
+                        print("[*] Ignored pause (nothing is currently playing).")
                     
-            elif action == "prev":
-                if not playlist: continue
-                if shuffle_mode:
-                    current_track_idx = random.randint(0, len(playlist) - 1)
-                elif current_track_idx > 0:
-                    current_track_idx -= 1
-                else:
-                    current_track_idx = len(playlist) - 1
+                elif action == "stop":
+                    player.stop()
+                    print("[*] Stopped playback")
                     
-                prev_track = playlist[current_track_idx]
-                player.set_media(instance.media_new(prev_track))
-                player.play()
-                print(f"[*] Previous Track: {os.path.basename(prev_track)}")
-                
-            elif action == "toggle_shuffle":
-                shuffle_mode = not shuffle_mode
-                print(f"[*] Shuffle Mode: {'ON' if shuffle_mode else 'OFF'}")
+                elif action == "next":
+                    if not playlist: continue
+                    if shuffle_mode:
+                        current_track_idx = random.randint(0, len(playlist) - 1)
+                    elif current_track_idx < len(playlist) - 1:
+                        current_track_idx += 1
+                    else:
+                        current_track_idx = 0 
+                    
+                    next_track = playlist[current_track_idx]
+                    player.stop()  # CRITICAL: Free the audio sink
+                    player.set_media(instance.media_new(next_track))
+                    player.play()
+                    print(f"[*] Next Track: {os.path.basename(next_track)}")
+                        
+                elif action == "prev":
+                    if not playlist: continue
+                    if shuffle_mode:
+                        current_track_idx = random.randint(0, len(playlist) - 1)
+                    elif current_track_idx > 0:
+                        current_track_idx -= 1
+                    else:
+                        current_track_idx = len(playlist) - 1
+                        
+                    prev_track = playlist[current_track_idx]
+                    player.stop()  # CRITICAL: Free the audio sink
+                    player.set_media(instance.media_new(prev_track))
+                    player.play()
+                    print(f"[*] Previous Track: {os.path.basename(prev_track)}")
+                    
+                elif action == "toggle_shuffle":
+                    shuffle_mode = not shuffle_mode
+                    print(f"[*] Shuffle Mode: {'ON' if shuffle_mode else 'OFF'}")
+
+            # Auto-advance logic: If the 200ms poll times out and a track has ended naturally
+            elif player.get_state() == vlc.State.Ended:
+                playlist = get_playlist()
+                if playlist and current_track_idx != -1:
+                    if shuffle_mode:
+                        current_track_idx = random.randint(0, len(playlist) - 1)
+                    elif current_track_idx < len(playlist) - 1:
+                        current_track_idx += 1
+                    else:
+                        current_track_idx = 0
+                        
+                    next_track = playlist[current_track_idx]
+                    player.stop()
+                    player.set_media(instance.media_new(next_track))
+                    player.play()
+                    print(f"[*] Auto-advancing to: {os.path.basename(next_track)}")
 
         except Exception as e:
             print(f"[!] VLC Playback Error: {e}")

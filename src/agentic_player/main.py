@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget,
                                QPushButton, QLabel, QDialog, QFormLayout, QComboBox, 
                                QDialogButtonBox, QCheckBox)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QPalette, QColor
 from PySide6.QtSql import QSqlDatabase
 
 from agentic_player.core.db_manager import DatabaseManager
@@ -21,6 +21,118 @@ def init_qt_db(db_path="agentic_player.db"):
     if not db.open():
         print(f"Failed to open Qt Database: {db.lastError().text()}")
         sys.exit(1)
+
+def apply_dark_theme(app):
+    app.setStyle("Fusion")
+    
+    # Global Color Palette
+    dark_palette = QPalette()
+    dark_palette.setColor(QPalette.Window, QColor("#1e1e2e"))
+    dark_palette.setColor(QPalette.WindowText, QColor("#cdd6f4"))
+    dark_palette.setColor(QPalette.Base, QColor("#181825"))
+    dark_palette.setColor(QPalette.AlternateBase, QColor("#1e1e2e"))
+    dark_palette.setColor(QPalette.ToolTipBase, QColor("#313244"))
+    dark_palette.setColor(QPalette.ToolTipText, QColor("#cdd6f4"))
+    dark_palette.setColor(QPalette.Text, QColor("#cdd6f4"))
+    dark_palette.setColor(QPalette.Button, QColor("#313244"))
+    dark_palette.setColor(QPalette.ButtonText, QColor("#cdd6f4"))
+    dark_palette.setColor(QPalette.BrightText, QColor("#f38ba8"))
+    dark_palette.setColor(QPalette.Link, QColor("#89b4fa"))
+    dark_palette.setColor(QPalette.Highlight, QColor("#89b4fa"))
+    dark_palette.setColor(QPalette.HighlightedText, QColor("#1e1e2e"))
+    app.setPalette(dark_palette)
+
+    # Global Stylesheet
+    qss = """
+    QWidget {
+        font-size: 13px;
+    }
+    QLabel#stageWidget {
+        background-color: #181825; 
+        color: #cdd6f4; 
+        font-size: 20px;
+    }
+    QLabel#summaryLabel, QLabel#statusLabel {
+        color: #a6adc8; 
+        font-size: 11px;
+        margin-bottom: 4px;
+    }
+    QLineEdit#searchBar {
+        padding: 5px; 
+        border-radius: 4px; 
+        background-color: #313244; 
+        color: #cdd6f4;
+        border: 1px solid #45475a;
+    }
+    QLineEdit, QTextEdit {
+        background-color: #181825;
+        color: #cdd6f4;
+        border: 1px solid #45475a;
+        padding: 4px;
+        border-radius: 4px;
+    }
+    QPushButton {
+        background-color: #313244;
+        color: #cdd6f4;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        padding: 4px 14px;
+        font-weight: bold;
+    }
+    QPushButton:hover {
+        background-color: #45475a;
+    }
+    QPushButton:checked {
+        background-color: #89b4fa;
+        color: #1e1e2e;
+    }
+    QPushButton#sendButton {
+        background-color: #89b4fa;
+        color: #1e1e2e;
+    }
+    QPushButton#sendButton:hover {
+        background-color: #b4befe;
+    }
+    QPushButton#pttButton {
+        background-color: #f38ba8;
+        color: #1e1e2e;
+    }
+    QPushButton#pttButton:hover {
+        background-color: #eba0ac;
+    }
+    QTreeWidget {
+        background-color: #181825;
+        alternate-background-color: #1e1e2e;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+    }
+    QHeaderView::section {
+        background-color: #313244;
+        color: #cdd6f4;
+        padding: 4px;
+        border: 1px solid #45475a;
+    }
+    QDockWidget {
+        color: #cdd6f4;
+        font-weight: bold;
+    }
+    QDockWidget::title {
+        background: #313244;
+        padding-left: 5px;
+        padding-top: 4px;
+        border-radius: 4px;
+    }
+    QComboBox {
+        background-color: #313244;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        padding: 2px 8px;
+    }
+    QComboBox::drop-down {
+        border-left: 1px solid #45475a;
+    }
+    """
+    app.setStyleSheet(qss)
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -125,12 +237,13 @@ class AgenticPlayerWindow(QMainWindow):
     def start_voice(self):
         if not self.stt_toggle.isChecked():
             return
-        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: white; font-weight: bold;")
+        # Keep inline style but update to match the rounded QSS button shape
+        self.ptt_button.setStyleSheet("background-color: #eba0ac; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
         self.ptt_button.setText("🎙️ Listening...")
         self.voice_socket.send_json({"action": "start"})
         
     def stop_voice(self):
-        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: black; font-weight: bold;")
+        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
         self.ptt_button.setText("🎤 Push to Talk")
         self.voice_socket.send_json({"action": "stop"})
 
@@ -165,7 +278,7 @@ class AgenticPlayerWindow(QMainWindow):
 
     def _setup_ui(self):
         self.central_widget = QLabel("Stage (Album Art / Audio Visualizer)", alignment=Qt.AlignCenter)
-        self.central_widget.setStyleSheet("background-color: #1e1e2e; color: #cdd6f4; font-size: 20px;")
+        self.central_widget.setObjectName("stageWidget")
         self.setCentralWidget(self.central_widget)
 
         left_dock = QDockWidget("Library", self)
@@ -188,13 +301,12 @@ class AgenticPlayerWindow(QMainWindow):
         self.text_input.returnPressed.connect(self.send_chat_command)
         
         self.send_button = QPushButton("Send")
-        self.send_button.setStyleSheet("background-color: #89b4fa; color: black; font-weight: bold; padding: 4px 12px;")
+        self.send_button.setObjectName("sendButton")
         self.send_button.clicked.connect(self.send_chat_command)
         
         input_layout.addWidget(self.text_input)
         input_layout.addWidget(self.send_button)
 
-        # NEW: Inference Dropdowns
         toggle_layout = QHBoxLayout()
         
         self.stt_toggle = QCheckBox("STT:")
@@ -220,16 +332,16 @@ class AgenticPlayerWindow(QMainWindow):
         
         bottom_buttons_layout = QHBoxLayout()
         self.ptt_button = QPushButton("🎤 Push to Talk")
+        self.ptt_button.setObjectName("pttButton")
         self.ptt_button.setMinimumHeight(45)
-        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: black; font-weight: bold;")
         self.ptt_button.pressed.connect(self.start_voice)
         self.ptt_button.released.connect(self.stop_voice)
         
         status_layout = QVBoxLayout()
         self.mic_status_label = QLabel("🎤 In: Auto-Detect")
-        self.mic_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.mic_status_label.setObjectName("statusLabel")
         self.spk_status_label = QLabel("🔊 Out: Auto-Detect")
-        self.spk_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.spk_status_label.setObjectName("statusLabel")
         status_layout.addWidget(self.mic_status_label)
         status_layout.addWidget(self.spk_status_label)
         
@@ -270,7 +382,6 @@ class AgenticPlayerWindow(QMainWindow):
 
         for btn in (btn_shuffle, btn_prev, btn_play, btn_pause, btn_stop, btn_next):
             btn.setMinimumHeight(40)
-            btn.setStyleSheet("font-weight: bold; padding: 4px 14px;")
             transport_layout.addWidget(btn)
 
         bottom_dock.setWidget(transport_container)
@@ -278,7 +389,7 @@ class AgenticPlayerWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle("Fusion") 
+    apply_dark_theme(app)
     window = AgenticPlayerWindow()
     window.show()
     sys.exit(app.exec())

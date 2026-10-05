@@ -12,13 +12,13 @@ class LibraryWidget(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
 
         self.summary_label = QLabel("Library: 0 artists")
-        self.summary_label.setStyleSheet("color: #a6adc8; font-size: 11px; margin-bottom: 4px;")
+        self.summary_label.setObjectName("summaryLabel")
         layout.addWidget(self.summary_label)
         
         # --- NEW SEARCH BAR ---
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("🔍 Search artists or songs...")
-        self.search_bar.setStyleSheet("padding: 5px; border-radius: 4px; background-color: #313244; color: #cdd6f4;")
+        self.search_bar.setObjectName("searchBar")
         self.search_bar.textChanged.connect(self._filter_library)
         layout.addWidget(self.search_bar)
 
