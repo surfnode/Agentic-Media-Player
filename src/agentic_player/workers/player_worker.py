@@ -27,12 +27,23 @@ def start_player_worker():
     
     print("[*] VLC Player Worker started. Listening on Port 5559...")
     
-    instance = vlc.Instance('--no-xlib --quiet')
+    # CRITICAL FIX: Removed --no-xlib so VLC can attach to the Qt Window
+    instance = vlc.Instance('--quiet')
     player = instance.media_player_new()
     
     current_track_idx = -1
     playlist = []
     shuffle_mode = False
+    cached_win_id = None
+
+    def play_target(file_path):
+        if cached_win_id:
+            player.set_xwindow(cached_win_id)
+        player.stop()
+        player.set_media(instance.media_new(file_path))
+        player.play()
+        print(f"[*] VLC Playing: {os.path.basename(file_path)}")
+        progress_pub.send_json({"type": "track_changed", "file_path": file_path})
 
     while True:
         try:
@@ -43,16 +54,15 @@ def start_player_worker():
                 action = msg.get("action")
                 playlist = get_playlist()
                 
+                if "win_id" in msg:
+                    cached_win_id = msg["win_id"]
+                
                 if action == "play":
                     file_path = msg.get("file_path")
                     if file_path and os.path.exists(file_path):
-                        player.stop()
-                        media = instance.media_new(file_path)
-                        player.set_media(media)
-                        player.play()
                         if file_path in playlist:
                             current_track_idx = playlist.index(file_path)
-                        print(f"[*] VLC Playing: {os.path.basename(file_path)}")
+                        play_target(file_path)
                     else:
                         current_state = player.get_state()
                         if current_state == vlc.State.Paused:
@@ -66,11 +76,7 @@ def start_player_worker():
                                     current_track_idx = random.randint(0, len(playlist) - 1)
                                 else:
                                     current_track_idx = 0
-                                next_track = playlist[current_track_idx]
-                                player.stop()
-                                player.set_media(instance.media_new(next_track))
-                                player.play()
-                                print(f"[*] Started library playback: {os.path.basename(next_track)}")
+                                play_target(playlist[current_track_idx])
                             else:
                                 print("[!] Play command received, but library is empty.")
                 
@@ -93,12 +99,7 @@ def start_player_worker():
                         current_track_idx += 1
                     else:
                         current_track_idx = 0 
-                    
-                    next_track = playlist[current_track_idx]
-                    player.stop()
-                    player.set_media(instance.media_new(next_track))
-                    player.play()
-                    print(f"[*] Next Track: {os.path.basename(next_track)}")
+                    play_target(playlist[current_track_idx])
                         
                 elif action == "prev":
                     if not playlist: continue
@@ -108,25 +109,18 @@ def start_player_worker():
                         current_track_idx -= 1
                     else:
                         current_track_idx = len(playlist) - 1
-                        
-                    prev_track = playlist[current_track_idx]
-                    player.stop()
-                    player.set_media(instance.media_new(prev_track))
-                    player.play()
-                    print(f"[*] Previous Track: {os.path.basename(prev_track)}")
+                    play_target(playlist[current_track_idx])
                     
                 elif action == "toggle_shuffle":
                     shuffle_mode = not shuffle_mode
                     print(f"[*] Shuffle Mode: {'ON' if shuffle_mode else 'OFF'}")
 
-                # --- NEW SEEK LOGIC ---
                 elif action == "seek":
                     pos = msg.get("value", 0.0)
                     player.set_position(pos)
 
             current_state = player.get_state()
             
-            # --- NEW PROGRESS BROADCAST LOGIC ---
             if current_state == vlc.State.Playing:
                 time_ms = player.get_time()
                 length_ms = player.get_length()
@@ -148,12 +142,7 @@ def start_player_worker():
                         current_track_idx += 1
                     else:
                         current_track_idx = 0
-                        
-                    next_track = playlist[current_track_idx]
-                    player.stop()
-                    player.set_media(instance.media_new(next_track))
-                    player.play()
-                    print(f"[*] Auto-advancing to: {os.path.basename(next_track)}")
+                    play_target(playlist[current_track_idx])
 
         except Exception as e:
             print(f"[!] VLC Playback Error: {e}")

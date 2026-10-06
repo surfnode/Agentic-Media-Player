@@ -1,5 +1,9 @@
 import sys
 import os
+
+# CRITICAL FIX: Force X11 windowing so VLC can successfully attach to the PySide6 winId()
+os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 import sqlite3
 import zmq
 import sounddevice as sd
@@ -167,29 +171,40 @@ class AgenticPlayerWindow(QMainWindow):
         self.zmq_bridge.chat_received.connect(self.display_ai_message)
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
+        self.zmq_bridge.track_changed.connect(self.on_track_changed)
 
     def send_play_command(self, file_path):
-        self.cmd_socket.send_json({"action": "play", "file_path": file_path})
-        
-        with sqlite3.connect(self.db_manager.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT thumbnail_path, title FROM tracks WHERE file_path=?", (file_path,))
-            result = cursor.fetchone()
-            
-            if result and result[0] and os.path.exists(result[0]):
-                pixmap = QPixmap(result[0])
-                self.central_widget.setPixmap(pixmap.scaled(
-                    self.central_widget.size(), 
-                    Qt.KeepAspectRatio, 
-                    Qt.SmoothTransformation
-                ))
-            else:
-                title = result[1] if result else "Unknown Track"
-                self.central_widget.clear()
-                self.central_widget.setText(f"🎵 Playing: {title}")
+        win_id = int(self.central_widget.winId())
+        self.cmd_socket.send_json({"action": "play", "file_path": file_path, "win_id": win_id})
 
     def send_transport_command(self, action):
-        self.cmd_socket.send_json({"action": action})
+        win_id = int(self.central_widget.winId())
+        self.cmd_socket.send_json({"action": action, "win_id": win_id})
+
+    def on_track_changed(self, file_path):
+        if not file_path: return
+        
+        is_video = "downloads/video" in file_path.replace('\\', '/')
+        
+        if is_video:
+            self.central_widget.clear()
+        else:
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT thumbnail_path, title FROM tracks WHERE file_path=?", (file_path,))
+                result = cursor.fetchone()
+                
+                if result and result[0] and os.path.exists(result[0]):
+                    pixmap = QPixmap(result[0])
+                    self.central_widget.setPixmap(pixmap.scaled(
+                        self.central_widget.size(), 
+                        Qt.KeepAspectRatio, 
+                        Qt.SmoothTransformation
+                    ))
+                else:
+                    title = result[1] if result else os.path.basename(file_path)
+                    self.central_widget.clear()
+                    self.central_widget.setText(f"🎵 Playing: {title}")
 
     def on_slider_moved(self, value):
         pos = value / 1000.0
@@ -210,8 +225,6 @@ class AgenticPlayerWindow(QMainWindow):
         self.duration_label.setText(fmt_time(length_ms))
 
     def update_mic_volume(self, volume):
-        # Scale raw numpy amplitude (0.0 - 1.0) to a visible 0-100 gauge. 
-        # Multiplier 400 makes regular speech fill about 50% of the bar.
         val = min(int(volume * 400), 100)
         self.mic_meter.setValue(val)
 

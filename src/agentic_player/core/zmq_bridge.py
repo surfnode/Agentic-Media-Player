@@ -7,6 +7,7 @@ class ZMQBridge(QThread):
     state_changed = Signal(dict)
     download_complete = Signal()
     chat_received = Signal(str)
+    track_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -61,12 +62,15 @@ class ZMQBridge(QThread):
             if progress_sub in socks:
                 try:
                     message = progress_sub.recv_json(flags=zmq.NOBLOCK)
-                    if message.get('type') == 'progress':
+                    msg_type = message.get('type')
+                    if msg_type == 'progress':
                         self.progress_updated.emit(
                             message.get('position', 0.0),
                             message.get('time', 0),
                             message.get('length', 0)
                         )
+                    elif msg_type == 'track_changed':
+                        self.track_changed.emit(message.get('file_path', ''))
                 except zmq.Again:
                     pass
 
