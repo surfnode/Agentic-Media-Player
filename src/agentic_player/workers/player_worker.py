@@ -18,8 +18,10 @@ def start_player_worker():
     cmd_socket = context.socket(zmq.PULL)
     cmd_socket.setsockopt(zmq.LINGER, 0)
     cmd_socket.bind("tcp://127.0.0.1:5559")
+
+    progress_pub = context.socket(zmq.PUB)
+    progress_pub.bind("tcp://127.0.0.1:5563")
     
-    # Use a poller so we don't block the loop indefinitely waiting for UI commands
     poller = zmq.Poller()
     poller.register(cmd_socket, zmq.POLLIN)
     
@@ -34,7 +36,6 @@ def start_player_worker():
 
     while True:
         try:
-            # Poll with a 200ms timeout
             socks = dict(poller.poll(200))
             
             if cmd_socket in socks:
@@ -44,34 +45,27 @@ def start_player_worker():
                 
                 if action == "play":
                     file_path = msg.get("file_path")
-                    
-                    # 1. UI explicitly sent a specific track to play
                     if file_path and os.path.exists(file_path):
-                        player.stop()  # CRITICAL: Free the audio sink before changing media
+                        player.stop()
                         media = instance.media_new(file_path)
                         player.set_media(media)
                         player.play()
                         if file_path in playlist:
                             current_track_idx = playlist.index(file_path)
                         print(f"[*] VLC Playing: {os.path.basename(file_path)}")
-                    
-                    # 2. Agent or UI sent a generic "Play" command
                     else:
                         current_state = player.get_state()
-                        
                         if current_state == vlc.State.Paused:
                             player.play()
                             print("[*] Resumed playback")
                         elif current_state == vlc.State.Playing:
                             print("[*] Audio is already playing.")
                         else:
-                            # Nothing is playing/loaded. Start the library!
                             if playlist:
                                 if shuffle_mode:
                                     current_track_idx = random.randint(0, len(playlist) - 1)
                                 else:
                                     current_track_idx = 0
-                                    
                                 next_track = playlist[current_track_idx]
                                 player.stop()
                                 player.set_media(instance.media_new(next_track))
@@ -101,7 +95,7 @@ def start_player_worker():
                         current_track_idx = 0 
                     
                     next_track = playlist[current_track_idx]
-                    player.stop()  # CRITICAL: Free the audio sink
+                    player.stop()
                     player.set_media(instance.media_new(next_track))
                     player.play()
                     print(f"[*] Next Track: {os.path.basename(next_track)}")
@@ -116,7 +110,7 @@ def start_player_worker():
                         current_track_idx = len(playlist) - 1
                         
                     prev_track = playlist[current_track_idx]
-                    player.stop()  # CRITICAL: Free the audio sink
+                    player.stop()
                     player.set_media(instance.media_new(prev_track))
                     player.play()
                     print(f"[*] Previous Track: {os.path.basename(prev_track)}")
@@ -125,8 +119,27 @@ def start_player_worker():
                     shuffle_mode = not shuffle_mode
                     print(f"[*] Shuffle Mode: {'ON' if shuffle_mode else 'OFF'}")
 
-            # Auto-advance logic: If the 200ms poll times out and a track has ended naturally
-            elif player.get_state() == vlc.State.Ended:
+                # --- NEW SEEK LOGIC ---
+                elif action == "seek":
+                    pos = msg.get("value", 0.0)
+                    player.set_position(pos)
+
+            current_state = player.get_state()
+            
+            # --- NEW PROGRESS BROADCAST LOGIC ---
+            if current_state == vlc.State.Playing:
+                time_ms = player.get_time()
+                length_ms = player.get_length()
+                pos = player.get_position()
+                
+                progress_pub.send_json({
+                    "type": "progress",
+                    "time": time_ms,
+                    "length": length_ms,
+                    "position": pos
+                })
+                
+            elif current_state == vlc.State.Ended:
                 playlist = get_playlist()
                 if playlist and current_track_idx != -1:
                     if shuffle_mode:

@@ -6,7 +6,7 @@ import sounddevice as sd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, 
                                QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, 
                                QPushButton, QLabel, QDialog, QFormLayout, QComboBox, 
-                               QDialogButtonBox, QCheckBox)
+                               QDialogButtonBox, QCheckBox, QTabWidget, QSlider, QProgressBar)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPalette, QColor
 from PySide6.QtSql import QSqlDatabase
@@ -25,7 +25,6 @@ def init_qt_db(db_path="agentic_player.db"):
 def apply_dark_theme(app):
     app.setStyle("Fusion")
     
-    # Global Color Palette
     dark_palette = QPalette()
     dark_palette.setColor(QPalette.Window, QColor("#1e1e2e"))
     dark_palette.setColor(QPalette.WindowText, QColor("#cdd6f4"))
@@ -42,108 +41,55 @@ def apply_dark_theme(app):
     dark_palette.setColor(QPalette.HighlightedText, QColor("#1e1e2e"))
     app.setPalette(dark_palette)
 
-    # Global Stylesheet
     qss = """
-    QWidget {
-        font-size: 13px;
-    }
-    QLabel#stageWidget {
-        background-color: #181825; 
-        color: #cdd6f4; 
-        font-size: 20px;
-    }
-    QLabel#summaryLabel, QLabel#statusLabel {
-        color: #a6adc8; 
-        font-size: 11px;
-        margin-bottom: 4px;
-    }
-    QLineEdit#searchBar {
-        padding: 5px; 
-        border-radius: 4px; 
-        background-color: #313244; 
-        color: #cdd6f4;
-        border: 1px solid #45475a;
-    }
-    QLineEdit, QTextEdit {
-        background-color: #181825;
-        color: #cdd6f4;
-        border: 1px solid #45475a;
-        padding: 4px;
-        border-radius: 4px;
-    }
-    QPushButton {
-        background-color: #313244;
-        color: #cdd6f4;
-        border: 1px solid #45475a;
-        border-radius: 4px;
-        padding: 4px 14px;
-        font-weight: bold;
-    }
-    QPushButton:hover {
-        background-color: #45475a;
-    }
-    QPushButton:checked {
-        background-color: #89b4fa;
-        color: #1e1e2e;
-    }
-    QPushButton#sendButton {
-        background-color: #89b4fa;
-        color: #1e1e2e;
-    }
-    QPushButton#sendButton:hover {
-        background-color: #b4befe;
-    }
-    QPushButton#pttButton {
-        background-color: #f38ba8;
-        color: #1e1e2e;
-    }
-    QPushButton#pttButton:hover {
-        background-color: #eba0ac;
-    }
-    QTreeWidget {
-        background-color: #181825;
-        alternate-background-color: #1e1e2e;
-        border: 1px solid #45475a;
-        border-radius: 4px;
-    }
-    QHeaderView::section {
-        background-color: #313244;
-        color: #cdd6f4;
-        padding: 4px;
-        border: 1px solid #45475a;
-    }
-    QDockWidget {
-        color: #cdd6f4;
-        font-weight: bold;
-    }
-    QDockWidget::title {
-        background: #313244;
-        padding-left: 5px;
-        padding-top: 4px;
-        border-radius: 4px;
-    }
-    QComboBox {
-        background-color: #313244;
-        border: 1px solid #45475a;
-        border-radius: 4px;
-        padding: 2px 8px;
-    }
-    QComboBox::drop-down {
-        border-left: 1px solid #45475a;
-    }
+    QWidget { font-size: 13px; }
+    QLabel#stageWidget { background-color: #181825; color: #cdd6f4; font-size: 20px; }
+    QLabel#summaryLabel, QLabel#statusLabel { color: #a6adc8; font-size: 11px; margin-bottom: 4px; }
+    QLineEdit#searchBar { padding: 5px; border-radius: 4px; background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; }
+    QLineEdit, QTextEdit { background-color: #181825; color: #cdd6f4; border: 1px solid #45475a; padding: 4px; border-radius: 4px; }
+    QPushButton { background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 4px 14px; font-weight: bold; }
+    QPushButton:hover { background-color: #45475a; }
+    QPushButton:checked { background-color: #89b4fa; color: #1e1e2e; }
+    QPushButton#sendButton { background-color: #89b4fa; color: #1e1e2e; }
+    QPushButton#sendButton:hover { background-color: #b4befe; }
+    
+    QPushButton#pttButton { background-color: #a6e3a1; color: #1e1e2e; }
+    QPushButton#pttButton:hover { background-color: #94e2d5; }
+    
+    QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 2px; background-color: #181825; }
+    QProgressBar#micMeter::chunk { background-color: #a6e3a1; width: 4px; margin: 1px; }
+
+    QTreeWidget { background-color: #181825; alternate-background-color: #1e1e2e; border: 1px solid #45475a; border-radius: 4px; }
+    QHeaderView::section { background-color: #313244; color: #cdd6f4; padding: 4px; border: 1px solid #45475a; }
+    QDockWidget { color: #cdd6f4; font-weight: bold; }
+    QDockWidget::title { background: #313244; padding-left: 5px; padding-top: 4px; border-radius: 4px; }
+    QComboBox { background-color: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 2px 8px; }
+    QComboBox::drop-down { border-left: 1px solid #45475a; }
+    QTabWidget::pane { border: 1px solid #45475a; background-color: #181825; border-radius: 4px; }
+    QTabBar::tab { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 6px 12px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+    QTabBar::tab:selected { background: #181825; border-bottom-color: #181825; font-weight: bold; }
+    
+    QSlider::groove:horizontal { border: 1px solid #45475a; height: 6px; background: #1e1e2e; border-radius: 3px; margin: 2px 0; }
+    QSlider::sub-page:horizontal { background: #89b4fa; border-radius: 3px; }
+    QSlider::handle:horizontal { background: #cdd6f4; border: 1px solid #45475a; width: 14px; margin: -5px 0; border-radius: 7px; }
+    QSlider::handle:horizontal:hover { background: #f38ba8; }
     """
     app.setStyleSheet(qss)
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Hardware Settings")
-        self.setMinimumWidth(450)
+        self.setWindowTitle("Application Settings")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
         
-        layout = QFormLayout(self)
+        main_layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        
+        hw_tab = QWidget()
+        hw_layout = QFormLayout(hw_tab)
         self.mic_combo = QComboBox()
         self.spk_combo = QComboBox()
-        
         self.mic_combo.addItem("Auto-Detect (System Default)", None)
         self.spk_combo.addItem("Auto-Detect (System Default)", None)
         
@@ -154,13 +100,32 @@ class SettingsDialog(QDialog):
             if dev['max_output_channels'] > 0:
                 self.spk_combo.addItem(f"[{i}] {dev['name']}", i)
                 
+        hw_layout.addRow("Microphone Input:", self.mic_combo)
+        hw_layout.addRow("Speaker Output:", self.spk_combo)
+        
+        ai_tab = QWidget()
+        ai_layout = QFormLayout(ai_tab)
+        self.llm_model_input = QLineEdit("ollama/granite4.2:8b-q8_0")
+        self.llm_api_input = QLineEdit("http://localhost:11434")
+        ai_layout.addRow("LLM Model:", self.llm_model_input)
+        ai_layout.addRow("Ollama API URL:", self.llm_api_input)
+        
+        ui_tab = QWidget()
+        ui_layout = QFormLayout(ui_tab)
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Catppuccin Mocha (Dark)", "Light Mode"])
+        ui_layout.addRow("Theme:", self.theme_combo)
+        
+        self.tabs.addTab(hw_tab, "🎧 Hardware")
+        self.tabs.addTab(ai_tab, "🧠 AI Models")
+        self.tabs.addTab(ui_tab, "🎨 Appearance")
+        
+        main_layout.addWidget(self.tabs)
+        
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        
-        layout.addRow("Microphone Input:", self.mic_combo)
-        layout.addRow("Speaker Output:", self.spk_combo)
-        layout.addWidget(buttons)
+        main_layout.addWidget(buttons)
         
     def get_selected_devices(self):
         return {
@@ -200,6 +165,8 @@ class AgenticPlayerWindow(QMainWindow):
         self.zmq_bridge.download_complete.connect(self.library_widget.refresh_library)
         self.library_widget.play_requested.connect(self.send_play_command)
         self.zmq_bridge.chat_received.connect(self.display_ai_message)
+        self.zmq_bridge.progress_updated.connect(self.update_progress)
+        self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
 
     def send_play_command(self, file_path):
         self.cmd_socket.send_json({"action": "play", "file_path": file_path})
@@ -224,6 +191,30 @@ class AgenticPlayerWindow(QMainWindow):
     def send_transport_command(self, action):
         self.cmd_socket.send_json({"action": action})
 
+    def on_slider_moved(self, value):
+        pos = value / 1000.0
+        self.cmd_socket.send_json({"action": "seek", "value": pos})
+
+    def update_progress(self, pos, time_ms, length_ms):
+        if not self.slider.isSliderDown() and pos >= 0:
+            self.slider.setValue(int(pos * 1000))
+            
+        def fmt_time(ms):
+            if ms <= 0: return "00:00"
+            s = ms // 1000
+            m = s // 60
+            s = s % 60
+            return f"{m:02d}:{s:02d}"
+            
+        self.time_label.setText(fmt_time(time_ms))
+        self.duration_label.setText(fmt_time(length_ms))
+
+    def update_mic_volume(self, volume):
+        # Scale raw numpy amplitude (0.0 - 1.0) to a visible 0-100 gauge. 
+        # Multiplier 400 makes regular speech fill about 50% of the bar.
+        val = min(int(volume * 400), 100)
+        self.mic_meter.setValue(val)
+
     def send_chat_command(self):
         user_text = self.text_input.text().strip()
         if not user_text: return
@@ -237,13 +228,12 @@ class AgenticPlayerWindow(QMainWindow):
     def start_voice(self):
         if not self.stt_toggle.isChecked():
             return
-        # Keep inline style but update to match the rounded QSS button shape
-        self.ptt_button.setStyleSheet("background-color: #eba0ac; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
+        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
         self.ptt_button.setText("🎙️ Listening...")
         self.voice_socket.send_json({"action": "start"})
         
     def stop_voice(self):
-        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
+        self.ptt_button.setStyleSheet("")
         self.ptt_button.setText("🎤 Push to Talk")
         self.voice_socket.send_json({"action": "stop"})
 
@@ -331,12 +321,23 @@ class AgenticPlayerWindow(QMainWindow):
         toggle_layout.addWidget(self.tts_combo)
         
         bottom_buttons_layout = QHBoxLayout()
+        
+        ptt_layout = QVBoxLayout()
         self.ptt_button = QPushButton("🎤 Push to Talk")
         self.ptt_button.setObjectName("pttButton")
         self.ptt_button.setMinimumHeight(45)
         self.ptt_button.pressed.connect(self.start_voice)
         self.ptt_button.released.connect(self.stop_voice)
         
+        self.mic_meter = QProgressBar()
+        self.mic_meter.setRange(0, 100)
+        self.mic_meter.setTextVisible(False)
+        self.mic_meter.setFixedHeight(8)
+        self.mic_meter.setObjectName("micMeter")
+        
+        ptt_layout.addWidget(self.ptt_button)
+        ptt_layout.addWidget(self.mic_meter)
+
         status_layout = QVBoxLayout()
         self.mic_status_label = QLabel("🎤 In: Auto-Detect")
         self.mic_status_label.setObjectName("statusLabel")
@@ -350,7 +351,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.settings_button.setMinimumWidth(45)
         self.settings_button.clicked.connect(self.open_settings)
         
-        bottom_buttons_layout.addWidget(self.ptt_button)
+        bottom_buttons_layout.addLayout(ptt_layout)
         bottom_buttons_layout.addLayout(status_layout)
         bottom_buttons_layout.addWidget(self.settings_button)
         
@@ -364,8 +365,26 @@ class AgenticPlayerWindow(QMainWindow):
         bottom_dock = QDockWidget("Transport", self)
         bottom_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         transport_container = QWidget()
-        transport_layout = QHBoxLayout(transport_container)
+        transport_main_layout = QVBoxLayout(transport_container)
         
+        progress_layout = QHBoxLayout()
+        self.time_label = QLabel("00:00")
+        self.time_label.setFixedWidth(50)
+        self.time_label.setAlignment(Qt.AlignCenter)
+        
+        self.duration_label = QLabel("00:00")
+        self.duration_label.setFixedWidth(50)
+        self.duration_label.setAlignment(Qt.AlignCenter)
+        
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 1000)
+        self.slider.sliderMoved.connect(self.on_slider_moved)
+        
+        progress_layout.addWidget(self.time_label)
+        progress_layout.addWidget(self.slider)
+        progress_layout.addWidget(self.duration_label)
+        
+        button_layout = QHBoxLayout()
         btn_shuffle = QPushButton("🔀 Shuffle")
         btn_shuffle.setCheckable(True)
         btn_shuffle.clicked.connect(lambda: self.send_transport_command("toggle_shuffle"))
@@ -382,8 +401,10 @@ class AgenticPlayerWindow(QMainWindow):
 
         for btn in (btn_shuffle, btn_prev, btn_play, btn_pause, btn_stop, btn_next):
             btn.setMinimumHeight(40)
-            transport_layout.addWidget(btn)
+            button_layout.addWidget(btn)
 
+        transport_main_layout.addLayout(progress_layout)
+        transport_main_layout.addLayout(button_layout)
         bottom_dock.setWidget(transport_container)
         self.addDockWidget(Qt.BottomDockWidgetArea, bottom_dock)
 

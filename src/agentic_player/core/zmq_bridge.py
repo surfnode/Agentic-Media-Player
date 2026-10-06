@@ -2,7 +2,8 @@ import zmq
 from PySide6.QtCore import Signal, QThread
 
 class ZMQBridge(QThread):
-    progress_updated = Signal(int)
+    progress_updated = Signal(float, int, int)
+    mic_volume_updated = Signal(float)
     state_changed = Signal(dict)
     download_complete = Signal()
     chat_received = Signal(str)
@@ -14,19 +15,27 @@ class ZMQBridge(QThread):
     def run(self):
         context = zmq.Context()
         
-        # Listen to Router Chat (Port 5557)
         router_sub = context.socket(zmq.SUB)
         router_sub.connect("tcp://127.0.0.1:5557")
         router_sub.setsockopt_string(zmq.SUBSCRIBE, "")
         
-        # Listen to Fetcher Status (Port 5562)
         fetcher_sub = context.socket(zmq.SUB)
         fetcher_sub.connect("tcp://127.0.0.1:5562")
         fetcher_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
+        progress_sub = context.socket(zmq.SUB)
+        progress_sub.connect("tcp://127.0.0.1:5563")
+        progress_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        voice_sub = context.socket(zmq.SUB)
+        voice_sub.connect("tcp://127.0.0.1:5564")
+        voice_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+
         poller = zmq.Poller()
         poller.register(router_sub, zmq.POLLIN)
         poller.register(fetcher_sub, zmq.POLLIN)
+        poller.register(progress_sub, zmq.POLLIN)
+        poller.register(voice_sub, zmq.POLLIN)
 
         while self._is_running:
             socks = dict(poller.poll(100))
@@ -48,9 +57,31 @@ class ZMQBridge(QThread):
                         self.download_complete.emit()
                 except zmq.Again:
                     pass
+
+            if progress_sub in socks:
+                try:
+                    message = progress_sub.recv_json(flags=zmq.NOBLOCK)
+                    if message.get('type') == 'progress':
+                        self.progress_updated.emit(
+                            message.get('position', 0.0),
+                            message.get('time', 0),
+                            message.get('length', 0)
+                        )
+                except zmq.Again:
+                    pass
+
+            if voice_sub in socks:
+                try:
+                    message = voice_sub.recv_json(flags=zmq.NOBLOCK)
+                    if message.get('type') == 'mic_volume':
+                        self.mic_volume_updated.emit(message.get('value', 0.0))
+                except zmq.Again:
+                    pass
                     
         router_sub.close()
         fetcher_sub.close()
+        progress_sub.close()
+        voice_sub.close()
         context.term()
 
     def stop(self):

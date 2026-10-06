@@ -21,6 +21,9 @@ def start_voice_worker():
     router_socket = context.socket(zmq.PUSH)
     router_socket.connect("tcp://127.0.0.1:5555")
 
+    volume_pub = context.socket(zmq.PUB)
+    volume_pub.bind("tcp://127.0.0.1:5564")
+
     poller = zmq.Poller()
     poller.register(ui_socket, zmq.POLLIN)
     poller.register(config_socket, zmq.POLLIN)
@@ -40,8 +43,11 @@ def start_voice_worker():
     sample_rate = 16000 
     current_mic_id = None
     stream = None
+    current_volume = 0.0
 
     def audio_callback(indata, frames, time, status):
+        nonlocal current_volume
+        current_volume = float(np.max(np.abs(indata)))
         if is_recording:
             audio_data.append(indata.copy())
 
@@ -53,13 +59,18 @@ def start_voice_worker():
             stream = sd.InputStream(samplerate=sample_rate, channels=1, 
                                     device=device_id, callback=audio_callback)
             stream.start()
+            print(f"[*] Mic initialized: {device_id if device_id is not None else 'System Default'}")
         except Exception as e:
             print(f"[!] Failed to open microphone: {e}")
 
     start_audio_stream(current_mic_id)
 
     while True:
-        socks = dict(poller.poll(100))
+        # 50ms timeout gives us ~20 FPS for the UI visualizer
+        socks = dict(poller.poll(50))
+
+        if stream and stream.active:
+            volume_pub.send_json({"type": "mic_volume", "value": current_volume})
 
         if config_socket in socks:
             msg = config_socket.recv_json()
