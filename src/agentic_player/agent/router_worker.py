@@ -3,6 +3,7 @@ import instructor
 from litellm import completion
 import sys
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -24,6 +25,19 @@ client_tools = instructor.from_litellm(completion, mode=instructor.Mode.TOOLS)
 
 PROVIDER_NAMES = {"ollama": "Ollama (local)", "openai": "OpenAI",
                   "anthropic": "Anthropic (Claude)", "custom": "Custom endpoint"}
+
+# Filler words that must never reach yt-dlp as part of a search query.
+# Deliberately excludes 'song' (song titles contain it, e.g. "Song 2").
+_QUERY_FILLER = {"playlist", "playlists", "songs", "album", "albums"}
+
+
+def sanitize_query(q):
+    """Belt-and-suspenders cleanup on top of the LLM's own discipline:
+    drop filler words the model was told to leave out anyway."""
+    words = [w for w in (q or "").split()
+             if w.lower().strip(".,!?\"'()") not in _QUERY_FILLER]
+    out = " ".join(words).strip()
+    return out or (q or "").strip()
 
 
 def build_llm_call(s):
@@ -108,21 +122,30 @@ def start_router():
     system_prompt = (
         "You are the conversational intelligence layer of a local media player.\n"
         "CRITICAL RULES:\n"
-        "1. DOWNLOADS: If the user asks to download a song, verify if they stated 'audio' or 'video'. "
-        "If they didn't, leave media_type null and ask them.\n"
-        "2. PLAYBACK: If the user asks to play music (e.g., 'play Bob Marley', 'play a dope lemon song'), "
-        "DO NOT ask them which specific song they want. Issue the 'play' action WITH the artist's name in the query field immediately. The system will auto-select a matching local file.\n"
+        "1. DOWNLOADS: Three clarifications, in this order of importance:\n"
+        "   a) FORMAT: if the user did not state 'audio' or 'video', leave media_type null and ask.\n"
+        "   b) COUNT: if the request implies multiple tracks (playlist, 'some songs', 'top 5', an "
+        "album, an artist's music) but they gave NO number, leave count null and ask how many "
+        "songs they want. A clearly single-song request gets no count question.\n"
+        "   c) CLEAN QUERY: when issuing the download command, put ONLY the artist or song name "
+        "in query - never words like 'playlist', 'songs', 'album', and never numbers (numbers "
+        "belong in count).\n"
+        "2. PLAYBACK: If the user asks to play music (e.g., 'play Bob Marley'), DO NOT ask which "
+        "specific song. Issue the 'play' action WITH the artist's name in the query field immediately. "
+        "The system will auto-select a matching local file.\n"
         "3. SHOWS: If they ask about concerts or live music, trigger 'search_shows'.\n"
-        "4. TRANSPORT: Use 'next' and 'prev' for skipping tracks, 'shuffle' to toggle shuffle mode, "
-        "'pause' and 'stop' for playback control. These need no query.\n\n"
+        "4. TRANSPORT: 'next'/'prev' skip tracks, 'shuffle' toggles shuffle, 'pause'/'stop' control "
+        "playback. These need no query.\n\n"
         "EXAMPLES:\n"
-        "- User: 'Play a Dope Lemon song'\n"
-        "  Thought: Wants to play an artist.\n"
-        "  Action: play (query: 'Dope Lemon') | Reply: 'Playing Dope Lemon from your library.'\n"
-        "- User: 'skip this song'\n"
-        "  Action: next | Reply: 'Skipping.'\n"
-        "- User: 'turn on shuffle'\n"
-        "  Action: shuffle | Reply: 'Shuffle mode on.'\n"
+        "- User: 'download 10 songs from Residente as audio'\n"
+        "  Action: download (query: 'Residente', media_type: 'audio', count: 10) | "
+        "Reply: 'Downloading 10 Residente songs as audio.'\n"
+        "- User: 'download the Juan Gabriel playlist'\n"
+        "  Reply: 'Audio or video, and how many songs?' (both null until they answer)\n"
+        "- User: 'download Bohemian Rhapsody as audio'\n"
+        "  Action: download (query: 'Bohemian Rhapsody', media_type: 'audio', no count)\n"
+        "- User: 'skip this song' -> Action: next | Reply: 'Skipping.'\n"
+        "- User: 'turn on shuffle' -> Action: shuffle | Reply: 'Shuffle mode on.'\n"
     )
 
     conversation_history = [{"role": "system", "content": system_prompt}]
@@ -153,7 +176,6 @@ def start_router():
             if len(conversation_history) > 13:
                 conversation_history = [conversation_history[0]] + conversation_history[-12:]
 
-            # Pre-flight: missing key / URL -> spoken guidance, no request burned
             friendly = preflight_error(llm_cfg)
             if friendly:
                 print(f"[!] Config incomplete: {friendly}")
@@ -206,9 +228,15 @@ def start_router():
 
                 elif cmd.action == "download" and cmd.query:
                     media_type = getattr(cmd, "media_type", None)
+                    count = getattr(cmd, "count", None)
                     if media_type in ["audio", "video"]:
-                        print(f"[Agent -> Fetcher]: Downloading '{cmd.query}' as {media_type.upper()}")
-                        fetch_socket.send_json({"action": "download", "query": cmd.query, "media_type": media_type})
+                        clean = sanitize_query(cmd.query)
+                        count = max(1, min(50, int(count))) if count else None
+                        payload = {"action": "download", "query": clean, "media_type": media_type}
+                        if count and count > 1:
+                            payload["count"] = count
+                        print(f"[Agent -> Fetcher]: {payload}")
+                        fetch_socket.send_json(payload)
 
                 elif cmd.action == "play":
                     if cmd.query:

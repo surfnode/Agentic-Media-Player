@@ -35,14 +35,14 @@ DEFAULTS = {
     "llm_api_key_custom": "",
     # Web search
     "web_search_enabled": True,
-    # Downloads: YouTube cookies (bot-check workaround). Pick ONE:
-    #   yt_cookies_from_browser: "firefox" / "chrome" / "chromium" / "brave"...
-    #     (you must be logged into youtube.com in that browser)
-    #   yt_cookies_file: path to an exported cookies.txt ("cookies.txt" works
-    #     if the file sits in the project root)
-    # Both empty = no cookies (YouTube may block downloads with "Sign in to
-    # confirm you're not a bot"). Fetcher reads these at BOOT - restart after
-    # changing them.
+    # Downloads ------------------------------------------------------------
+    # yt-dlp player clients, tried IN ORDER until one gets past YouTube.
+    # Keep yt-dlp updated - old versions fail these checks regardless.
+    "yt_player_clients": "tv,web_safari,mweb",
+    # Optional cookies (strongest fix for "Sign in to confirm you're not a
+    # bot"). Pick ONE; both empty = no cookies. Fetcher reads at BOOT.
+    #   yt_cookies_from_browser: "firefox"/"chrome"/... (logged into youtube.com)
+    #   yt_cookies_file: path to exported cookies.txt
     "yt_cookies_from_browser": "",
     "yt_cookies_file": "",
     # TTS (Kokoro)
