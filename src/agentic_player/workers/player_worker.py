@@ -3,6 +3,11 @@ import zmq
 import vlc
 import sqlite3
 import random
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from agentic_player.core.settings import load_settings
 
 def get_playlist():
     db_path = "agentic_player.db"
@@ -27,9 +32,16 @@ def start_player_worker():
     
     print("[*] VLC Player Worker started. Listening on Port 5559...")
     
-    # CRITICAL FIX: Removed --no-xlib so VLC can attach to the Qt Window
     instance = vlc.Instance('--quiet')
     player = instance.media_player_new()
+    
+    # Boot config from settings.json (M1 pattern)
+    s = load_settings()
+    volume = max(0, min(100, int(s.get("volume", 100))))
+    muted = bool(s.get("muted", False))
+    player.audio_set_volume(volume)
+    player.audio_set_mute(muted)
+    print(f"[*] Boot volume: {volume}{' (muted)' if muted else ''}")
     
     current_track_idx = -1
     playlist = []
@@ -41,6 +53,9 @@ def start_player_worker():
             player.set_xwindow(cached_win_id)
         player.stop()
         player.set_media(instance.media_new(file_path))
+        # Re-apply audio state: some VLC builds reset volume/mute on new media
+        player.audio_set_volume(volume)
+        player.audio_set_mute(muted)
         player.play()
         print(f"[*] VLC Playing: {os.path.basename(file_path)}")
         progress_pub.send_json({"type": "track_changed", "file_path": file_path})
@@ -119,6 +134,16 @@ def start_player_worker():
                     pos = msg.get("value", 0.0)
                     player.set_position(pos)
 
+                elif action == "set_volume":
+                    volume = max(0, min(100, int(msg.get("value", 100))))
+                    player.audio_set_volume(volume)
+                    print(f"[*] Volume: {volume}")
+
+                elif action == "set_mute":
+                    muted = bool(msg.get("value", False))
+                    player.audio_set_mute(muted)
+                    print(f"[*] Muted: {muted}")
+                        
             current_state = player.get_state()
             
             if current_state == vlc.State.Playing:

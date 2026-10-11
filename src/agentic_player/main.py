@@ -56,6 +56,8 @@ def apply_dark_theme(app):
     QPushButton:checked { background-color: #89b4fa; color: #1e1e2e; }
     QPushButton#sendButton { background-color: #89b4fa; color: #1e1e2e; }
     QPushButton#sendButton:hover { background-color: #b4befe; }
+    QPushButton#muteButton { padding: 4px; font-size: 15px; }
+    QPushButton#muteButton:checked { background-color: #f38ba8; color: #1e1e2e; }
     
     QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 4px; background-color: #181825; }
     QProgressBar#micMeter::chunk { background-color: #a6e3a1; width: 4px; margin: 1px; }
@@ -243,6 +245,15 @@ class AgenticPlayerWindow(QMainWindow):
         self.ptt_button.setEnabled(self.stt_toggle.isChecked() and not self.always_on_toggle.isChecked())
         self.always_on_toggle.setEnabled(self.stt_toggle.isChecked())
 
+        # Volume / mute - restored visually; player worker boots from the same file
+        self.volume_slider.blockSignals(True)
+        self.volume_slider.setValue(int(s.get("volume", 100)))
+        self.volume_slider.blockSignals(False)
+        self.mute_button.blockSignals(True)
+        self.mute_button.setChecked(bool(s.get("muted", False)))
+        self.mute_button.setText("🔇" if self.mute_button.isChecked() else "🔊")
+        self.mute_button.blockSignals(False)
+
         mic_name = s.get("mic_name") or "Auto-Detect (System Default)"
         mic_name = mic_name.split("] ")[-1] if "] " in mic_name else mic_name
         self.mic_status_label.setText(f"🎤 In: {mic_name[:25]}")
@@ -279,6 +290,18 @@ class AgenticPlayerWindow(QMainWindow):
     def on_slider_moved(self, value):
         pos = value / 1000.0
         self.cmd_socket.send_json({"action": "seek", "value": pos})
+
+    def on_volume_changed(self, value):
+        self.cmd_socket.send_json({"action": "set_volume", "value": value})
+
+    def on_volume_released(self):
+        # Persist once per drag (valueChanged only sends to the player worker)
+        save_settings({"volume": self.volume_slider.value()})
+
+    def on_mute_toggled(self, checked):
+        self.mute_button.setText("🔇" if checked else "🔊")
+        save_settings({"muted": checked})
+        self.cmd_socket.send_json({"action": "set_mute", "value": checked})
 
     def update_progress(self, pos, time_ms, length_ms):
         if not self.slider.isSliderDown() and pos >= 0:
@@ -364,6 +387,11 @@ class AgenticPlayerWindow(QMainWindow):
             self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 
     def closeEvent(self, event):
+        # Belt and suspenders: persist final volume state on exit
+        save_settings({
+            "volume": self.volume_slider.value(),
+            "muted": self.mute_button.isChecked(),
+        })
         print("[*] Shutting down ZMQ Bridge gracefully...")
         self.zmq_bridge.stop()
         event.accept()
@@ -485,9 +513,25 @@ class AgenticPlayerWindow(QMainWindow):
         self.slider.setRange(0, 1000)
         self.slider.sliderMoved.connect(self.on_slider_moved)
         
+        self.mute_button = QPushButton("🔊")
+        self.mute_button.setObjectName("muteButton")
+        self.mute_button.setCheckable(True)
+        self.mute_button.setFixedSize(44, 30)
+        self.mute_button.setToolTip("Mute / Unmute")
+        self.mute_button.toggled.connect(self.on_mute_toggled)
+
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setMaximumWidth(140)
+        self.volume_slider.setToolTip("Volume")
+        self.volume_slider.valueChanged.connect(self.on_volume_changed)
+        self.volume_slider.sliderReleased.connect(self.on_volume_released)
+
         progress_layout.addWidget(self.time_label)
         progress_layout.addWidget(self.slider)
         progress_layout.addWidget(self.duration_label)
+        progress_layout.addWidget(self.mute_button)
+        progress_layout.addWidget(self.volume_slider)
         
         button_layout = QHBoxLayout()
         for label, action in [("🔀 Shuffle", "toggle_shuffle"), ("⏮ Prev", "prev"), ("▶ Play", "play"), ("⏸ Pause", "pause"), ("⏹ Stop", "stop"), ("⏭ Next", "next")]:

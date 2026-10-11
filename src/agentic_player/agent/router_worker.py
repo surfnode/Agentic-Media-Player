@@ -57,11 +57,17 @@ def start_router():
         "If they didn't, leave media_type null and ask them.\n"
         "2. PLAYBACK: If the user asks to play music (e.g., 'play Bob Marley', 'play a dope lemon song'), "
         "DO NOT ask them which specific song they want. Issue the 'play' action WITH the artist's name in the query field immediately. The system will auto-select a matching local file.\n"
-        "3. SHOWS: If they ask about concerts or live music, trigger 'search_shows'.\n\n"
+        "3. SHOWS: If they ask about concerts or live music, trigger 'search_shows'.\n"
+        "4. TRANSPORT: Use 'next' and 'prev' for skipping tracks, 'shuffle' to toggle shuffle mode, "
+        "'pause' and 'stop' for playback control. These need no query.\n\n"
         "EXAMPLES:\n"
         "- User: 'Play a Dope Lemon song'\n"
         "  Thought: Wants to play an artist.\n"
         "  Action: play (query: 'Dope Lemon') | Reply: 'Playing Dope Lemon from your library.'\n"
+        "- User: 'skip this song'\n"
+        "  Action: next | Reply: 'Skipping.'\n"
+        "- User: 'turn on shuffle'\n"
+        "  Action: shuffle | Reply: 'Shuffle mode on.'\n"
     )
 
     conversation_history = [{"role": "system", "content": system_prompt}]
@@ -164,8 +170,10 @@ def start_router():
                     else:
                         play_socket.send_json({"action": "play"})
 
-                elif cmd.action in ["pause", "stop"]:
-                    play_socket.send_json({"action": cmd.action})
+                elif cmd.action in ["pause", "stop", "next", "prev", "shuffle"]:
+                    player_action = "toggle_shuffle" if cmd.action == "shuffle" else cmd.action
+                    print(f"[Agent -> Player]: {player_action}")
+                    play_socket.send_json({"action": player_action})
 
 if __name__ == "__main__":
     start_router()

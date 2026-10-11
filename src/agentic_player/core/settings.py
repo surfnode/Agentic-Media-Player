@@ -27,6 +27,9 @@ DEFAULTS = {
     # TTS (Kokoro)
     "kokoro_voice": "af_bella",
     "kokoro_speed": 1.0,
+    # Playback
+    "volume": 100,
+    "muted": False,
     # Inference toggles (right panel)
     "stt_enabled": True,
     "tts_enabled": True,
