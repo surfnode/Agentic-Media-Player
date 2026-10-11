@@ -2,8 +2,8 @@ from pydantic import BaseModel, Field
 from typing import Literal, Optional, List
 
 class Command(BaseModel):
-    action: Literal["download", "play", "pause", "stop"] = Field(description="The action to perform")
-    query: Optional[str] = Field(default=None, description="The search term or song to download, if applicable")
+    action: Literal["download", "play", "pause", "stop", "search_shows"] = Field(description="The action to perform")
+    query: Optional[str] = Field(default=None, description="The search term, song, or the artist name when searching for shows")
     media_type: Optional[Literal["audio", "video"]] = Field(default=None, description="Must be 'audio' or 'video'. Leave null if you need to ask the user.")
 
 class AgentResponse(BaseModel):

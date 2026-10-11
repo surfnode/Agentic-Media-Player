@@ -1,92 +1,75 @@
-import os
-os.environ["SUNO_USE_SMALL_MODELS"] = "True"
-import logging
-import transformers
-transformers.logging.set_verbosity_error()
-
 import zmq
 import sounddevice as sd
 import torch
-from transformers import AutoProcessor, BarkModel
-import warnings
+import re
 from kokoro import KPipeline
 
-warnings.filterwarnings("ignore")
-
 def start_tts_worker():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[*] Loading TTS Models on {device.upper()}...")
-    
-    processor = AutoProcessor.from_pretrained("suno/bark-small")
-    model_bark = BarkModel.from_pretrained("suno/bark-small").to(device)
-    bark_voice = "v2/en_speaker_6" 
-    
-    pipeline_kokoro = KPipeline(lang_code='a') 
-    kokoro_voice = "af_bella" 
-    
     context = zmq.Context()
-    chat_socket = context.socket(zmq.SUB)
-    chat_socket.connect("tcp://127.0.0.1:5557")
-    chat_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-
+    
+    ui_socket = context.socket(zmq.SUB)
+    ui_socket.connect("tcp://127.0.0.1:5557")
+    ui_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+    
     config_socket = context.socket(zmq.SUB)
     config_socket.connect("tcp://127.0.0.1:5561")
     config_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-    
+
     poller = zmq.Poller()
-    poller.register(chat_socket, zmq.POLLIN)
+    poller.register(ui_socket, zmq.POLLIN)
     poller.register(config_socket, zmq.POLLIN)
 
-    current_spk_id = None
-    tts_enabled = True
-    current_engine = "Bark (Heavy)"
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"[*] Loading Kokoro TTS on {device.upper()}...")
     
-    print("[*] TTS Worker ready.")
+    current_lang = 'a'
+    pipeline = KPipeline(lang_code=current_lang, device=device)
+    
+    current_voice = "af_bella"
+    current_speed = 1.0
+    tts_enabled = True
+    spk_device_id = None
+    sample_rate = 24000
+
+    print("[*] TTS Worker ready (Kokoro Only).")
 
     while True:
-        try:
-            socks = dict(poller.poll(100))
-            
-            if config_socket in socks:
-                msg = config_socket.recv_json()
-                msg_type = msg.get("type")
-                if msg_type == "hardware_update":
-                    new_spk_id = msg["config"].get("spk_device_id")
-                    if new_spk_id != current_spk_id:
-                        current_spk_id = new_spk_id
-                        sd.default.device = (None, current_spk_id)
-                elif msg_type == "inference_toggle":
-                    tts_enabled = msg["config"].get("tts_enabled", True)
-                    engine = msg["config"].get("tts_engine")
-                    if engine and engine != current_engine:
-                        print(f"\n[*] Swapping TTS Engine to: {engine}")
-                        current_engine = engine
+        socks = dict(poller.poll(100))
+        
+        if config_socket in socks:
+            msg = config_socket.recv_json()
+            if msg.get("type") in ["llm_update", "hardware_update"]:
+                config = msg.get("config", {})
+                if "kokoro_voice" in config:
+                    new_voice = config["kokoro_voice"]
+                    if new_voice != current_voice:
+                        current_voice = new_voice
+                        new_lang = 'b' if current_voice.startswith('b') else 'a'
+                        if new_lang != current_lang:
+                            current_lang = new_lang
+                            pipeline = KPipeline(lang_code=current_lang, device=device)
+                        print(f"[*] Kokoro Voice swapped to: {current_voice}")
+                if "kokoro_speed" in config:
+                    current_speed = float(config["kokoro_speed"])
+                if "spk_device_id" in config:
+                    spk_device_id = config["spk_device_id"]
+            elif msg.get("type") == "inference_toggle":
+                tts_enabled = msg["config"].get("tts_enabled", True)
 
-            if chat_socket in socks:
-                message = chat_socket.recv_json()
-                if message.get("type") == "chat_reply":
-                    text_to_speak = message.get("value", "")
-                    if text_to_speak and tts_enabled:
-                        print(f"[{current_engine} Synthesizing]: {text_to_speak}")
-                        
-                        if current_engine == "Kokoro-82M (Fast)":
-                            generator = pipeline_kokoro(text_to_speak, voice=kokoro_voice, speed=1)
-                            for i, (gs, ps, audio) in enumerate(generator):
-                                sd.play(audio, samplerate=24000) 
-                                sd.wait()
-                        else:
-                            inputs = processor(text_to_speak, voice_preset=bark_voice).to(device)
-                            with torch.no_grad():
-                                speech_output = model_bark.generate(**inputs)
-                            audio_data = speech_output[0].cpu().numpy()
-                            sd.play(audio_data, samplerate=model_bark.generation_config.sample_rate)
+        if ui_socket in socks and tts_enabled:
+            message = ui_socket.recv_json()
+            if message.get("type") == "chat_reply":
+                text = message.get("value", "")
+                clean_text = re.sub(r'<[^>]+>', '', text)
+                if clean_text:
+                    print(f"[Kokoro Synthesizing]: {clean_text[:50]}...")
+                    try:
+                        generator = pipeline(clean_text, voice=current_voice, speed=current_speed, split_pattern=r'\n+')
+                        for _, _, audio in generator:
+                            sd.play(audio, sample_rate, device=spk_device_id)
                             sd.wait()
-                            
-                    elif not tts_enabled:
-                        print("[TTS Muted]: Skipping audio playback.")
-                        
-        except Exception as e:
-            print(f"[!] TTS Error: {e}")
+                    except Exception as e:
+                        print(f"[!] TTS Error: {e}")
 
 if __name__ == "__main__":
     start_tts_worker()

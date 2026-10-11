@@ -7,7 +7,7 @@ import sqlite3
 import zmq
 import sounddevice as sd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, 
-                               QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, 
+                               QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QTextBrowser, QLineEdit, 
                                QPushButton, QLabel, QDialog, QFormLayout, QComboBox, 
                                QDialogButtonBox, QCheckBox, QTabWidget, QSlider, QProgressBar)
 from PySide6.QtCore import Qt
@@ -49,17 +49,14 @@ def apply_dark_theme(app):
     QLabel#stageWidget { background-color: #181825; color: #cdd6f4; font-size: 20px; }
     QLabel#summaryLabel, QLabel#statusLabel { color: #a6adc8; font-size: 11px; margin-bottom: 4px; }
     QLineEdit#searchBar { padding: 5px; border-radius: 4px; background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; }
-    QLineEdit, QTextEdit { background-color: #181825; color: #cdd6f4; border: 1px solid #45475a; padding: 4px; border-radius: 4px; }
+    QLineEdit, QTextBrowser { background-color: #181825; color: #cdd6f4; border: 1px solid #45475a; padding: 4px; border-radius: 4px; }
     QPushButton { background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 4px 14px; font-weight: bold; }
     QPushButton:hover { background-color: #45475a; }
     QPushButton:checked { background-color: #89b4fa; color: #1e1e2e; }
     QPushButton#sendButton { background-color: #89b4fa; color: #1e1e2e; }
     QPushButton#sendButton:hover { background-color: #b4befe; }
     
-    QPushButton#pttButton { background-color: #a6e3a1; color: #1e1e2e; }
-    QPushButton#pttButton:hover { background-color: #94e2d5; }
-    
-    QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 2px; background-color: #181825; }
+    QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 4px; background-color: #181825; }
     QProgressBar#micMeter::chunk { background-color: #a6e3a1; width: 4px; margin: 1px; }
 
     QTreeWidget { background-color: #181825; alternate-background-color: #1e1e2e; border: 1px solid #45475a; border-radius: 4px; }
@@ -84,7 +81,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Application Settings")
         self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        self.setMinimumHeight(450)
         
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -108,10 +105,43 @@ class SettingsDialog(QDialog):
         
         ai_tab = QWidget()
         ai_layout = QFormLayout(ai_tab)
-        self.llm_model_input = QLineEdit("ollama/granite4.2:8b-q8_0")
+        
+        self.llm_model_combo = QComboBox()
+        self.llm_model_combo.setEditable(True)
+        self.llm_model_combo.addItems([
+            "ollama/granite4.2:8b-q8_0", "ollama/llama3.1", "ollama/mistral", "ollama/qwen2.5"
+        ])
         self.llm_api_input = QLineEdit("http://localhost:11434")
-        ai_layout.addRow("LLM Model:", self.llm_model_input)
+        
+        self.search_shows_check = QCheckBox("Enable Web Search & Links (Music Shows)")
+        self.search_shows_check.setChecked(True)
+        
+        # --- NEW KOKORO TTS TOOLS ---
+        self.kokoro_voice_combo = QComboBox()
+        self.kokoro_voice_combo.addItems([
+            "af_bella (American Female)",
+            "af_sarah (American Female)",
+            "af_sky (American Female)",
+            "af_nicole (American Female)",
+            "am_adam (American Male)",
+            "am_michael (American Male)",
+            "am_onyx (American Male)",
+            "bf_emma (British Female)",
+            "bm_george (British Male)"
+        ])
+        
+        self.kokoro_speed = QSlider(Qt.Horizontal)
+        self.kokoro_speed.setRange(50, 150)
+        self.kokoro_speed.setValue(100)
+        self.kokoro_speed.setTickPosition(QSlider.TicksBelow)
+        self.kokoro_speed.setTickInterval(10)
+        
+        ai_layout.addRow("LLM Model:", self.llm_model_combo)
         ai_layout.addRow("Ollama API URL:", self.llm_api_input)
+        ai_layout.addRow("", self.search_shows_check)
+        ai_layout.addRow(QLabel("--- Text-to-Speech ---"))
+        ai_layout.addRow("Kokoro Voice:", self.kokoro_voice_combo)
+        ai_layout.addRow("Kokoro Speed (50%-150%):", self.kokoro_speed)
         
         ui_tab = QWidget()
         ui_layout = QFormLayout(ui_tab)
@@ -120,7 +150,7 @@ class SettingsDialog(QDialog):
         ui_layout.addRow("Theme:", self.theme_combo)
         
         self.tabs.addTab(hw_tab, "🎧 Hardware")
-        self.tabs.addTab(ai_tab, "🧠 AI Models")
+        self.tabs.addTab(ai_tab, "🧠 AI Models & TTS")
         self.tabs.addTab(ui_tab, "🎨 Appearance")
         
         main_layout.addWidget(self.tabs)
@@ -136,8 +166,11 @@ class SettingsDialog(QDialog):
             "mic_name": self.mic_combo.currentText(),
             "spk_device_id": self.spk_combo.currentData(),
             "spk_name": self.spk_combo.currentText(),
-            "llm_model": self.llm_model_input.text(),
-            "llm_api": self.llm_api_input.text()
+            "llm_model": self.llm_model_combo.currentText(),
+            "llm_api": self.llm_api_input.text(),
+            "web_search_enabled": self.search_shows_check.isChecked(),
+            "kokoro_voice": self.kokoro_voice_combo.currentText().split(" ")[0],
+            "kokoro_speed": self.kokoro_speed.value() / 100.0
         }
 
 class AgenticPlayerWindow(QMainWindow):
@@ -184,9 +217,7 @@ class AgenticPlayerWindow(QMainWindow):
 
     def on_track_changed(self, file_path):
         if not file_path: return
-        
         is_video = "downloads/video" in file_path.replace('\\', '/')
-        
         if is_video:
             self.central_widget.clear()
         else:
@@ -194,14 +225,9 @@ class AgenticPlayerWindow(QMainWindow):
                 cursor = conn.cursor()
                 cursor.execute("SELECT thumbnail_path, title FROM tracks WHERE file_path=?", (file_path,))
                 result = cursor.fetchone()
-                
                 if result and result[0] and os.path.exists(result[0]):
                     pixmap = QPixmap(result[0])
-                    self.central_widget.setPixmap(pixmap.scaled(
-                        self.central_widget.size(), 
-                        Qt.KeepAspectRatio, 
-                        Qt.SmoothTransformation
-                    ))
+                    self.central_widget.setPixmap(pixmap.scaled(self.central_widget.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 else:
                     title = result[1] if result else os.path.basename(file_path)
                     self.central_widget.clear()
@@ -214,14 +240,11 @@ class AgenticPlayerWindow(QMainWindow):
     def update_progress(self, pos, time_ms, length_ms):
         if not self.slider.isSliderDown() and pos >= 0:
             self.slider.setValue(int(pos * 1000))
-            
         def fmt_time(ms):
             if ms <= 0: return "00:00"
             s = ms // 1000
             m = s // 60
-            s = s % 60
-            return f"{m:02d}:{s:02d}"
-            
+            return f"{m:02d}:{s%60:02d}"
         self.time_label.setText(fmt_time(time_ms))
         self.duration_label.setText(fmt_time(length_ms))
 
@@ -240,21 +263,32 @@ class AgenticPlayerWindow(QMainWindow):
         self.chat_history.append(f"<b style='color:#f38ba8;'>Agent:</b> {text}<br>")
 
     def start_voice(self):
-        if not self.stt_toggle.isChecked():
-            return
-        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 4px; border: 1px solid #45475a;")
+        if not self.stt_toggle.isChecked() or self.always_on_toggle.isChecked(): return
+        self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 22px; border: 2px solid #f38ba8; font-size: 14px;")
         self.ptt_button.setText("🎙️ Listening...")
         self.voice_socket.send_json({"action": "start"})
         
     def stop_voice(self):
-        self.ptt_button.setStyleSheet("")
+        if not self.stt_toggle.isChecked() or self.always_on_toggle.isChecked(): return
+        self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
         self.ptt_button.setText("🎤 Push to Talk")
         self.voice_socket.send_json({"action": "stop"})
+
+    def toggle_always_on(self, checked):
+        self.ptt_button.setEnabled(not checked)
+        if checked:
+            self.ptt_button.setStyleSheet("background-color: #313244; color: #6c7086; font-weight: bold; border-radius: 22px; border: 2px solid #45475a; font-size: 14px;")
+            self.ptt_button.setText("🎙️ Auto-Listening Mode")
+        else:
+            self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
+            self.ptt_button.setText("🎤 Push to Talk")
+        self.voice_socket.send_json({"action": "toggle_always_on", "value": checked})
 
     def on_inference_toggled(self):
         stt_active = self.stt_toggle.isChecked()
         tts_active = self.tts_toggle.isChecked()
-        self.ptt_button.setEnabled(stt_active)
+        self.ptt_button.setEnabled(stt_active and not self.always_on_toggle.isChecked())
+        self.always_on_toggle.setEnabled(stt_active)
         self.config_pub_socket.send_json({
             "type": "inference_toggle",
             "config": {
@@ -269,14 +303,12 @@ class AgenticPlayerWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
             config = dialog.get_all_settings()
-            
-            # Update Labels
             mic_disp = config["mic_name"].split("] ")[-1] if "] " in config["mic_name"] else config["mic_name"]
             spk_disp = config["spk_name"].split("] ")[-1] if "] " in config["spk_name"] else config["spk_name"]
             self.mic_status_label.setText(f"🎤 In: {mic_disp[:25]}")
             self.spk_status_label.setText(f"🔊 Out: {spk_disp[:25]}")
             
-            # Broadcast Updates
+            # Broadcast the full config containing the new kokoro_voice and kokoro_speed keys
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
             self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 
@@ -301,7 +333,8 @@ class AgenticPlayerWindow(QMainWindow):
         agent_container = QWidget()
         agent_layout = QVBoxLayout(agent_container)
         
-        self.chat_history = QTextEdit()
+        self.chat_history = QTextBrowser()
+        self.chat_history.setOpenExternalLinks(True)
         self.chat_history.setReadOnly(True)
         
         input_layout = QHBoxLayout()
@@ -317,21 +350,17 @@ class AgenticPlayerWindow(QMainWindow):
         input_layout.addWidget(self.send_button)
 
         toggle_layout = QHBoxLayout()
-        
         self.stt_toggle = QCheckBox("STT:")
         self.stt_toggle.setChecked(True)
         self.stt_toggle.toggled.connect(self.on_inference_toggled)
-        
         self.stt_combo = QComboBox()
-        self.stt_combo.addItems(["Whisper (Base)", "Faster-Whisper (Small)"])
+        self.stt_combo.addItems(["Qwen3-ASR (1.7B)"])
         self.stt_combo.currentIndexChanged.connect(self.on_inference_toggled)
-        
         self.tts_toggle = QCheckBox("TTS:")
         self.tts_toggle.setChecked(True)
         self.tts_toggle.toggled.connect(self.on_inference_toggled)
-        
         self.tts_combo = QComboBox()
-        self.tts_combo.addItems(["Bark (Heavy)", "Kokoro-82M (Fast)"])
+        self.tts_combo.addItems(["Kokoro-82M (Fast)"])
         self.tts_combo.currentIndexChanged.connect(self.on_inference_toggled)
         
         toggle_layout.addWidget(self.stt_toggle)
@@ -342,11 +371,19 @@ class AgenticPlayerWindow(QMainWindow):
         bottom_buttons_layout = QHBoxLayout()
         
         ptt_layout = QVBoxLayout()
+        ptt_controls = QHBoxLayout()
+        
         self.ptt_button = QPushButton("🎤 Push to Talk")
-        self.ptt_button.setObjectName("pttButton")
         self.ptt_button.setMinimumHeight(45)
+        self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
         self.ptt_button.pressed.connect(self.start_voice)
         self.ptt_button.released.connect(self.stop_voice)
+        
+        self.always_on_toggle = QCheckBox("Always On")
+        self.always_on_toggle.toggled.connect(self.toggle_always_on)
+        
+        ptt_controls.addWidget(self.ptt_button)
+        ptt_controls.addWidget(self.always_on_toggle)
         
         self.mic_meter = QProgressBar()
         self.mic_meter.setRange(0, 100)
@@ -354,7 +391,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.mic_meter.setFixedHeight(8)
         self.mic_meter.setObjectName("micMeter")
         
-        ptt_layout.addWidget(self.ptt_button)
+        ptt_layout.addLayout(ptt_controls)
         ptt_layout.addWidget(self.mic_meter)
 
         status_layout = QVBoxLayout()
@@ -390,11 +427,9 @@ class AgenticPlayerWindow(QMainWindow):
         self.time_label = QLabel("00:00")
         self.time_label.setFixedWidth(50)
         self.time_label.setAlignment(Qt.AlignCenter)
-        
         self.duration_label = QLabel("00:00")
         self.duration_label.setFixedWidth(50)
         self.duration_label.setAlignment(Qt.AlignCenter)
-        
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 1000)
         self.slider.sliderMoved.connect(self.on_slider_moved)
@@ -404,22 +439,11 @@ class AgenticPlayerWindow(QMainWindow):
         progress_layout.addWidget(self.duration_label)
         
         button_layout = QHBoxLayout()
-        btn_shuffle = QPushButton("🔀 Shuffle")
-        btn_shuffle.setCheckable(True)
-        btn_shuffle.clicked.connect(lambda: self.send_transport_command("toggle_shuffle"))
-        btn_prev = QPushButton("⏮ Previous")
-        btn_prev.clicked.connect(lambda: self.send_transport_command("prev"))
-        btn_play = QPushButton("▶ Play")
-        btn_play.clicked.connect(lambda: self.send_transport_command("play"))
-        btn_pause = QPushButton("⏸ Pause")
-        btn_pause.clicked.connect(lambda: self.send_transport_command("pause"))
-        btn_stop = QPushButton("⏹ Stop")
-        btn_stop.clicked.connect(lambda: self.send_transport_command("stop"))
-        btn_next = QPushButton("⏭ Next")
-        btn_next.clicked.connect(lambda: self.send_transport_command("next"))
-
-        for btn in (btn_shuffle, btn_prev, btn_play, btn_pause, btn_stop, btn_next):
+        for label, action in [("🔀 Shuffle", "toggle_shuffle"), ("⏮ Prev", "prev"), ("▶ Play", "play"), ("⏸ Pause", "pause"), ("⏹ Stop", "stop"), ("⏭ Next", "next")]:
+            btn = QPushButton(label)
             btn.setMinimumHeight(40)
+            btn.clicked.connect(lambda checked=False, a=action: self.send_transport_command(a))
+            if label == "🔀 Shuffle": btn.setCheckable(True)
             button_layout.addWidget(btn)
 
         transport_main_layout.addLayout(progress_layout)
