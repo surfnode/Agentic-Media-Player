@@ -28,3 +28,21 @@ The application runs on a distributed background worker model over `localhost` T
 * `5562`: Fetcher Completion Status
 * `5563`: Playback Progress & Scrubber Sync
 * `5564`: Live Mic Volume Broadcast
+
+## Hardware Requirements
+Given the heavy reliance on concurrent local AI inference (LLM routing, Whisper Speech-to-Text, and Bark/Kokoro Text-to-Speech), a capable workstation is highly recommended.
+
+**Minimum System Requirements:**
+* **OS:** Linux (Ubuntu/Debian based)
+* **CPU:** Quad-core processor
+* **RAM:** 16GB System Memory
+* **GPU:** Dedicated GPU with at least 8GB VRAM (NVIDIA preferred for CUDA support)
+* **Storage:** 50GB SSD
+
+**Recommended System Requirements (for seamless AI multitasking):**
+* **OS:** Linux (Kubuntu/Ubuntu 26.04+)
+* **CPU:** Modern multi-core processor (AMD Ryzen 9 or equivalent)
+* **RAM:** 32GB+ DDR5 Memory
+* **GPU:** NVIDIA GeForce RTX series with 16GB VRAM (e.g., RTX 5060 Ti)
+* **Storage:** 1TB NVMe SSD for fast media and model loading
+* **Audio:** Dedicated microphone and speakers for push-to-talk capability
