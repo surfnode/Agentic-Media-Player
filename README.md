@@ -1,3 +1,5 @@
+<img width="1919" height="1117" alt="image" src="https://github.com/user-attachments/assets/4a4c6b4e-5f4e-4c05-9b00-172948dfd559" />
+
 # Agentic Media Player
 
 A local-AI-first media player and library manager built with Python, PySide6, and ZeroMQ. It integrates voice commands, conversational AI, and automated media fetching into a single unified desktop interface.
