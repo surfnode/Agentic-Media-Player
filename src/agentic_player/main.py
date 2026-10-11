@@ -275,8 +275,7 @@ class AgenticPlayerWindow(QMainWindow):
 
         tl.addStretch()
 
-        # Compact device chips - full names live in tooltips, so the bar
-        # never gets crowded (this was the overlap culprit)
+        # Compact device chips - full names in tooltips, bar stays uncrowded
         self.mic_status_label = QLabel("🎤")
         self.mic_status_label.setObjectName("statusChip")
         self.mic_status_label.setFixedSize(30, 30)
@@ -415,8 +414,9 @@ class AgenticPlayerWindow(QMainWindow):
         for page in (self.home_page, self.library_page, self.genres_page):
             page.play_requested.connect(self.send_play_collection_command)
         self.playlists_page.play_requested.connect(self.send_play_collection_command)
-        self.genres_page.menu_requested.connect(self.on_card_menu)
-        self.playlists_page.menu_requested.connect(self.on_playlist_card_menu)
+        self.genres_page.menu_requested.connect(lambda c, p: self.on_card_menu(c, p))
+        self.playlists_page.menu_requested.connect(lambda c, s, p: self.on_playlist_card_menu((c, s, p)))
+        self.now_playing_page.up_next.itemClicked.connect(self.on_up_next_clicked)
 
         # Agent dock
         self.agent_dock = QDockWidget("🤖 Agent", self)
@@ -523,6 +523,7 @@ class AgenticPlayerWindow(QMainWindow):
     def send_play_collection_command(self, files, start_path):
         """Clicking any card/tree item: jump to Now Playing (YT watch-page
         behavior) and hand the player the collection as its play context."""
+        self._play_context = list(files)
         self.pages.setCurrentWidget(self.now_playing_page)
         self.now_playing_page.set_queue(files, start_path)
         win_id = int(self.now_playing_page.video_surface.winId())
@@ -532,6 +533,15 @@ class AgenticPlayerWindow(QMainWindow):
             "start_path": start_path,
             "win_id": win_id,
         })
+
+    def on_up_next_clicked(self, item):
+        """Click a track in Up Next: jump to it within the current context."""
+        files = getattr(self, "_play_context", [])
+        match = next((f for f in files if os.path.basename(f) == item.text()), None)
+        if match and os.path.exists(match):
+            self.send_play_collection_command(files, match)
+        else:
+            self.send_transport_command("next")
 
     def on_play_clicked(self):
         if self.play_button.text() == "⏸":
@@ -573,8 +583,7 @@ class AgenticPlayerWindow(QMainWindow):
 
     # ---------------- card context menus ----------------
 
-    def on_card_menu(self, payload):
-        card, pos = payload if isinstance(payload, tuple) else (payload, None)
+    def on_card_menu(self, card, pos):
         m = QMenu(self)
         add_menu = m.addMenu("➕ Add to playlist")
         for pid, name, count in self.db_manager.get_playlists():

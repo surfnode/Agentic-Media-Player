@@ -3,7 +3,7 @@ playlist management, and the Now Playing stage."""
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QScrollArea,
                                 QLabel, QListWidget, QTabWidget, QTreeWidget, QTreeWidgetItem,
-                                QMenu, QInputDialog, QMessageBox, QPushButton)
+                                QMenu, QInputDialog, QMessageBox, QPushButton, QStackedWidget)
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QPixmap
 from agentic_player.core.db_manager import DatabaseManager
@@ -36,8 +36,8 @@ def load_thumb(path, w, h):
 
 class TrackCard(QWidget):
     """A YouTube-style card: 16:9 thumbnail, title, artist/duration."""
-    activated = Signal(object)                 # the card
-    menu_requested = Signal(object, object)    # the card, global pos
+    activated = Signal(object)
+    menu_requested = Signal(object, object)    # card, global pos
 
     def __init__(self, track, parent=None):
         super().__init__(parent)
@@ -60,8 +60,7 @@ class TrackCard(QWidget):
             self.thumb_label.setPixmap(pm)
         layout.addWidget(self.thumb_label)
 
-        title_text = self.title or "Untitled"
-        t = QLabel(title_text)
+        t = QLabel(self.title or "Untitled")
         t.setObjectName("cardTitle")
         t.setWordWrap(True)
         t.setMaximumHeight(36)
@@ -81,7 +80,7 @@ class TrackCard(QWidget):
 
 class CardSection(QWidget):
     """Header + wrapped grid of cards. Clicking a card plays the section."""
-    play_requested = Signal(list, str)   # files, start_path
+    play_requested = Signal(list, str)
 
     def __init__(self, title, subtitle="", parent=None):
         super().__init__(parent)
@@ -119,7 +118,6 @@ class CardSection(QWidget):
             self.play_requested.emit(files, card.file_path)
 
     def set_filter(self, text):
-        """Returns visible card count."""
         text = text.lower()
         visible = 0
         for c in self.cards:
@@ -186,7 +184,7 @@ class HomePage(QWidget):
 
 class GenresPage(QWidget):
     play_requested = Signal(list, str)
-    menu_requested = Signal(object, object)   # card, global pos
+    menu_requested = Signal(object, object)    # card, global pos
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -230,7 +228,9 @@ class GenresPage(QWidget):
 
 class PlaylistsPage(QWidget):
     play_requested = Signal(list, str)
-    menu_requested = Signal(object, object)   # card, global pos (page routes by section)
+    # 3 values: (card, owning section, global pos). The old 2-value signal
+    # crashed the app the moment you right-clicked a playlist card.
+    menu_requested = Signal(object, object, object)
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -273,7 +273,7 @@ class PlaylistsPage(QWidget):
             for t in self.db.get_playlist_tracks(pid):
                 card = TrackCard(t)
                 card.menu_requested.connect(
-                    lambda card, pos, s=s: self.menu_requested.emit((card, s, pos)))
+                    lambda c, p, s=s: self.menu_requested.emit(c, s, p))
                 s.add_card(card)
             self.sections.append(s)
             self.vbox.insertWidget(self.vbox.count() - 1, s)
@@ -287,10 +287,10 @@ class PlaylistsPage(QWidget):
 
     def _playlist_header_menu(self, section, pos):
         pid, name = section.pid, section.header_label.text()[2:]
+        files = [t[3] for t in self.db.get_playlist_tracks(pid) if t[3]]
         m = QMenu(self)
-        m.addAction("▶ Play all", lambda: self.play_requested.emit(
-            [t[3] for t in self.db.get_playlist_tracks(pid) if t[3]],
-            ([t[3] for t in self.db.get_playlist_tracks(pid) if t[3]] or [""])[0]))
+        if files:
+            m.addAction("▶ Play all", lambda: self.play_requested.emit(files, files[0]))
         m.addSeparator()
         m.addAction("✏️ Rename…", lambda: self._rename(section))
         m.addAction("🗑 Delete", lambda: self._delete(section))
@@ -318,7 +318,6 @@ class PlaylistsPage(QWidget):
 class LibraryPage(QWidget):
     """Dense navigation trees (Audio/Video), grouped by artist."""
     play_requested = Signal(list, str)
-    menu_requested = Signal(object, object)   # card, global pos (unused for trees)
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -390,6 +389,30 @@ class LibraryPage(QWidget):
                     head.setExpanded(True)
 
 
+class ArtVideoStage(QWidget):
+    """Album art (index 0) / black video surface (index 1). VLC embeds into the surface."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.stack = QStackedWidget(self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.stack)
+
+        self.art_label = QLabel("🎵")
+        self.art_label.setObjectName("stageArt")
+        self.art_label.setAlignment(Qt.AlignCenter)
+        self.stack.addWidget(self.art_label)
+
+        self.video_surface = QLabel("video")
+        self.video_surface.setObjectName("stageVideo")
+        self.video_surface.setAlignment(Qt.AlignCenter)
+        self.stack.addWidget(self.video_surface)
+        self.stack.setCurrentIndex(0)
+
+    def show_media(self, is_video):
+        self.stack.setCurrentIndex(1 if is_video else 0)
+
+
 class NowPlayingPage(QWidget):
     """Big stage: video surface (VLC embeds here), album art, and Up Next."""
 
@@ -429,7 +452,10 @@ class NowPlayingPage(QWidget):
         self.stage.show_media(is_video)
         if not is_video:
             pm = load_thumb(thumb, 480, 270)
-            self.stage.art_label.setPixmap(pm) if not pm.isNull() else self.stage.art_label.clear()
+            if not pm.isNull():
+                self.stage.art_label.setPixmap(pm)
+            else:
+                self.stage.art_label.clear()
 
     def set_queue(self, files, start):
         self.up_next.clear()
@@ -439,28 +465,3 @@ class NowPlayingPage(QWidget):
                 self.up_next.addItem(os.path.basename(f))
         if self.up_next.count() == 0:
             self.up_next.addItem("(queue managed by the player)")
-
-
-class ArtVideoStage(QWidget):
-    """Album art (index 0) / black video surface (index 1). VLC embeds into the surface."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        from PySide6.QtWidgets import QStackedWidget
-        self.stack = QStackedWidget(self)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.stack)
-
-        self.art_label = QLabel("🎵")
-        self.art_label.setObjectName("stageArt")
-        self.art_label.setAlignment(Qt.AlignCenter)
-        self.stack.addWidget(self.art_label)
-
-        self.video_surface = QLabel("video")
-        self.video_surface.setObjectName("stageVideo")
-        self.video_surface.setAlignment(Qt.AlignCenter)
-        self.stack.addWidget(self.video_surface)
-        self.stack.setCurrentIndex(0)
-
-    def show_media(self, is_video):
-        self.stack.setCurrentIndex(1 if is_video else 0)
