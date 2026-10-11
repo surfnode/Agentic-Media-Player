@@ -1,7 +1,6 @@
 import sys
 import os
 
-# CRITICAL FIX: Force X11 windowing so VLC can successfully attach to the PySide6 winId()
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 import sqlite3
@@ -131,12 +130,14 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
         
-    def get_selected_devices(self):
+    def get_all_settings(self):
         return {
             "mic_device_id": self.mic_combo.currentData(),
             "mic_name": self.mic_combo.currentText(),
             "spk_device_id": self.spk_combo.currentData(),
-            "spk_name": self.spk_combo.currentText()
+            "spk_name": self.spk_combo.currentText(),
+            "llm_model": self.llm_model_input.text(),
+            "llm_api": self.llm_api_input.text()
         }
 
 class AgenticPlayerWindow(QMainWindow):
@@ -267,12 +268,17 @@ class AgenticPlayerWindow(QMainWindow):
     def open_settings(self):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            config = dialog.get_selected_devices()
+            config = dialog.get_all_settings()
+            
+            # Update Labels
             mic_disp = config["mic_name"].split("] ")[-1] if "] " in config["mic_name"] else config["mic_name"]
             spk_disp = config["spk_name"].split("] ")[-1] if "] " in config["spk_name"] else config["spk_name"]
             self.mic_status_label.setText(f"🎤 In: {mic_disp[:25]}")
             self.spk_status_label.setText(f"🔊 Out: {spk_disp[:25]}")
+            
+            # Broadcast Updates
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
+            self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 
     def closeEvent(self, event):
         print("[*] Shutting down ZMQ Bridge gracefully...")
