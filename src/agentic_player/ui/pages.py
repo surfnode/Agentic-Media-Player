@@ -171,7 +171,7 @@ class HomePage(QWidget):
         if self.section:
             self.section.setParent(None)
             self.section.deleteLater()
-        tracks = self.db.get_all_tracks()[:30]
+        tracks = self.db.get_all_tracks()
         self.section = CardSection("Recently added", f"{len(tracks)} tracks")
         self.section.play_requested.connect(self.play_requested)
         for t in tracks:
