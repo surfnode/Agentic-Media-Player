@@ -1,12 +1,11 @@
-# Python Virtual Environment
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
 venv/
 .venv/
-__pycache__/
-*.pyc
 
-# Local Database & Media Files
-downloads/
+# Runtime state (regenerated automatically)
 *.db
-
-# Secrets & Environment Variables
-.env
+downloads/
