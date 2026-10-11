@@ -28,7 +28,7 @@ stamp() {
 mkdir -p logs
 
 # bgutil POT server (YouTube PO tokens) - start once, skip if already up
-if ! ss -ltn 2>/dev/null | grep -q ':4416'; then
+if [ -d bgutil-ytdlp-pot-provider/node ] && ! ss -ltn 2>/dev/null | grep -q ':4416'; then
   echo "[*] Starting bgutil POT server (YouTube PO tokens)..."
   (cd bgutil-ytdlp-pot-provider/node && npm start) >> logs/pot.log 2>&1 &
 fi

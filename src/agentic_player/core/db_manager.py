@@ -173,4 +173,4 @@ class DatabaseManager:
                 FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id
                 WHERE pt.playlist_id = ?
                 ORDER BY pt.position, pt.added_at, t.id
-            """).fetchall(playlist_id)
+            """, (playlist_id,)).fetchall()
