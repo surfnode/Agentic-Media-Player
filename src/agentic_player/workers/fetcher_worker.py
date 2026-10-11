@@ -2,6 +2,11 @@ import os
 import zmq
 import yt_dlp
 import sqlite3
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from agentic_player.core.db_manager import DatabaseManager
 
 def init_directories():
     os.makedirs("downloads/audio", exist_ok=True)
@@ -46,12 +51,16 @@ def sync_downloads():
                             
                     artist = "Unknown Artist"
                     title = base_name.replace("_", " ").strip()
+                    genre = None
+                    duration = None
 
                     if has_tinytag:
                         try:
                             tag = TinyTag.get(file_path)
                             if tag.artist: artist = tag.artist.strip()
                             if tag.title: title = tag.title.strip()
+                            genre = (tag.genre or "").strip() or None
+                            duration = int(tag.duration) if tag.duration else None
                         except Exception:
                             pass
                             
@@ -65,13 +74,14 @@ def sync_downloads():
                         title = parts[1].strip()
                         
                     cursor.execute("""
-                        INSERT INTO tracks (title, artist, file_path, thumbnail_path)
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO tracks (title, artist, file_path, thumbnail_path, genre, duration)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(file_path) DO UPDATE SET
                             title=excluded.title,
                             artist=excluded.artist,
-                            thumbnail_path=excluded.thumbnail_path
-                    """, (title, artist, file_path, thumb_path))
+                            thumbnail_path=excluded.thumbnail_path,
+                            duration=excluded.duration
+                    """, (title, artist, file_path, thumb_path, genre, duration))
                     
                     added_or_updated += 1
                 
@@ -81,6 +91,7 @@ def sync_downloads():
 
 def start_fetcher_worker():
     init_directories()
+    DatabaseManager()  # ensure schema (genre/duration/playlists) exists before raw SQL below
     sync_downloads()
     
     context = zmq.Context()
@@ -143,6 +154,7 @@ def start_fetcher_worker():
                         for entry in entries:
                             title = entry.get('title', 'Unknown Title')
                             artist = entry.get('uploader', 'Unknown Artist')
+                            duration = entry.get('duration')
                             
                             try:
                                 base_path = os.path.splitext(ydl.prepare_filename(entry))[0]
@@ -163,13 +175,14 @@ def start_fetcher_worker():
                             
                             if file_path:
                                 cursor.execute("""
-                                    INSERT INTO tracks (title, artist, file_path, thumbnail_path)
-                                    VALUES (?, ?, ?, ?)
+                                    INSERT INTO tracks (title, artist, file_path, thumbnail_path, genre, duration)
+                                    VALUES (?, ?, ?, ?, ?, ?)
                                     ON CONFLICT(file_path) DO UPDATE SET
                                         title=excluded.title,
                                         artist=excluded.artist,
-                                        thumbnail_path=excluded.thumbnail_path
-                                """, (title, artist, file_path, thumb_path))
+                                        thumbnail_path=excluded.thumbnail_path,
+                                        duration=excluded.duration
+                                """, (title, artist, file_path, thumb_path, None, duration))
                                 print(f"[*] Logged {media_type} to DB: {title}")
                         conn.commit()
 

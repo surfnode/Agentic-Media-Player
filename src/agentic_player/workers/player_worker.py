@@ -35,7 +35,6 @@ def start_player_worker():
     instance = vlc.Instance('--quiet')
     player = instance.media_player_new()
     
-    # Boot config from settings.json (M1 pattern)
     s = load_settings()
     volume = max(0, min(100, int(s.get("volume", 100))))
     muted = bool(s.get("muted", False))
@@ -44,21 +43,42 @@ def start_player_worker():
     print(f"[*] Boot volume: {volume}{' (muted)' if muted else ''}")
     
     current_track_idx = -1
-    playlist = []
     shuffle_mode = False
     cached_win_id = None
+    queue = []  # active play context; empty = fall back to full library
 
     def play_target(file_path):
         if cached_win_id:
             player.set_xwindow(cached_win_id)
         player.stop()
         player.set_media(instance.media_new(file_path))
-        # Re-apply audio state: some VLC builds reset volume/mute on new media
         player.audio_set_volume(volume)
         player.audio_set_mute(muted)
         player.play()
         print(f"[*] VLC Playing: {os.path.basename(file_path)}")
         progress_pub.send_json({"type": "track_changed", "file_path": file_path})
+
+    def start_collection(files, start_path=None):
+        """Replace the play context with `files` and play start_path (or first)."""
+        valid = [f for f in files if f and os.path.exists(f)]
+        if not valid:
+            print("[!] play_collection: no playable files in that collection.")
+            return False
+        queue.clear()
+        queue.extend(valid)
+        if start_path and start_path in queue:
+            current_idx = queue.index(start_path)
+        else:
+            current_idx = 0
+        set_current_and_play(current_idx)
+        return True
+
+    current_track_idx = -1
+
+    def set_current_and_play(idx):
+        nonlocal current_track_idx
+        current_track_idx = idx
+        play_target(queue[idx])
 
     while True:
         try:
@@ -67,17 +87,23 @@ def start_player_worker():
             if cmd_socket in socks:
                 msg = cmd_socket.recv_json()
                 action = msg.get("action")
-                playlist = get_playlist()
                 
                 if "win_id" in msg:
                     cached_win_id = msg["win_id"]
-                
+
                 if action == "play":
                     file_path = msg.get("file_path")
                     if file_path and os.path.exists(file_path):
-                        if file_path in playlist:
-                            current_track_idx = playlist.index(file_path)
-                        play_target(file_path)
+                        # Direct file play (agent): context becomes the full library
+                        library = get_playlist()
+                        queue.clear()
+                        queue.extend(library)
+                        if file_path in queue:
+                            set_current_and_play(queue.index(file_path))
+                        else:
+                            queue.clear()
+                            queue.append(file_path)
+                            set_current_and_play(0)
                     else:
                         current_state = player.get_state()
                         if current_state == vlc.State.Paused:
@@ -86,14 +112,17 @@ def start_player_worker():
                         elif current_state == vlc.State.Playing:
                             print("[*] Audio is already playing.")
                         else:
-                            if playlist:
+                            pool = queue if queue else get_playlist()
+                            if pool:
                                 if shuffle_mode:
-                                    current_track_idx = random.randint(0, len(playlist) - 1)
+                                    set_current_and_play(random.randint(0, len(pool) - 1))
                                 else:
-                                    current_track_idx = 0
-                                play_target(playlist[current_track_idx])
+                                    set_current_and_play(0)
                             else:
                                 print("[!] Play command received, but library is empty.")
+                
+                elif action == "play_collection":
+                    start_collection(msg.get("files") or [], msg.get("start_path"))
                 
                 elif action == "pause":
                     if player.get_state() == vlc.State.Playing:
@@ -107,24 +136,24 @@ def start_player_worker():
                     print("[*] Stopped playback")
                     
                 elif action == "next":
-                    if not playlist: continue
+                    pool = queue if queue else get_playlist()
+                    if not pool: continue
                     if shuffle_mode:
-                        current_track_idx = random.randint(0, len(playlist) - 1)
-                    elif current_track_idx < len(playlist) - 1:
-                        current_track_idx += 1
+                        set_current_and_play(random.randint(0, len(pool) - 1))
+                    elif current_track_idx < len(pool) - 1:
+                        set_current_and_play(current_track_idx + 1)
                     else:
-                        current_track_idx = 0 
-                    play_target(playlist[current_track_idx])
+                        set_current_and_play(0)
                         
                 elif action == "prev":
-                    if not playlist: continue
+                    pool = queue if queue else get_playlist()
+                    if not pool: continue
                     if shuffle_mode:
-                        current_track_idx = random.randint(0, len(playlist) - 1)
+                        set_current_and_play(random.randint(0, len(pool) - 1))
                     elif current_track_idx > 0:
-                        current_track_idx -= 1
+                        set_current_and_play(current_track_idx - 1)
                     else:
-                        current_track_idx = len(playlist) - 1
-                    play_target(playlist[current_track_idx])
+                        set_current_and_play(len(pool) - 1)
                     
                 elif action == "toggle_shuffle":
                     shuffle_mode = not shuffle_mode
@@ -159,15 +188,14 @@ def start_player_worker():
                 })
                 
             elif current_state == vlc.State.Ended:
-                playlist = get_playlist()
-                if playlist and current_track_idx != -1:
+                pool = queue if queue else get_playlist()
+                if pool and current_track_idx != -1:
                     if shuffle_mode:
-                        current_track_idx = random.randint(0, len(playlist) - 1)
-                    elif current_track_idx < len(playlist) - 1:
-                        current_track_idx += 1
+                        set_current_and_play(random.randint(0, len(pool) - 1))
+                    elif current_track_idx < len(pool) - 1:
+                        set_current_and_play(current_track_idx + 1)
                     else:
-                        current_track_idx = 0
-                    play_target(playlist[current_track_idx])
+                        set_current_and_play(0)
 
         except Exception as e:
             print(f"[!] VLC Playback Error: {e}")

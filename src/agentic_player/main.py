@@ -220,7 +220,7 @@ class AgenticPlayerWindow(QMainWindow):
         self._load_persisted_settings()
         
         self.zmq_bridge.download_complete.connect(self.library_widget.refresh_library)
-        self.library_widget.play_requested.connect(self.send_play_command)
+        self.library_widget.play_collection_requested.connect(self.send_play_collection_command)
         self.zmq_bridge.chat_received.connect(self.display_ai_message)
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
@@ -261,9 +261,11 @@ class AgenticPlayerWindow(QMainWindow):
         spk_name = spk_name.split("] ")[-1] if "] " in spk_name else spk_name
         self.spk_status_label.setText(f"🔊 Out: {spk_name[:25]}")
 
-    def send_play_command(self, file_path):
+    def send_play_collection_command(self, files, start_path):
+        """Play a group of files as a queue context, starting at start_path.
+        Emitted by the Library (artist / genre / playlist)."""
         win_id = int(self.central_widget.winId())
-        self.cmd_socket.send_json({"action": "play", "file_path": file_path, "win_id": win_id})
+        self.cmd_socket.send_json({"action": "play_collection", "files": list(files), "start_path": start_path, "win_id": win_id})
 
     def send_transport_command(self, action):
         win_id = int(self.central_widget.winId())
