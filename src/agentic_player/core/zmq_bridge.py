@@ -71,6 +71,8 @@ class ZMQBridge(QThread):
                         )
                     elif msg_type == 'track_changed':
                         self.track_changed.emit(message.get('file_path', ''))
+                    elif msg_type == 'state':
+                        self.state_changed.emit(message)
                 except zmq.Again:
                     pass
 

@@ -175,6 +175,17 @@ def start_player_worker():
                         
             current_state = player.get_state()
             
+            # Publish state every tick so the UI play/pause button tracks reality
+            state_names = {
+                vlc.State.Playing: "playing", vlc.State.Paused: "paused",
+                vlc.State.Ended: "ended", vlc.State.Stopped: "stopped",
+            }
+            progress_pub.send_json({
+                "type": "state",
+                "state": state_names.get(current_state, "stopped"),
+                "time": player.get_time(),
+            })
+            
             if current_state == vlc.State.Playing:
                 time_ms = player.get_time()
                 length_ms = player.get_length()

@@ -6,10 +6,11 @@ os.environ["QT_QPA_PLATFORM"] = "xcb"
 import sqlite3
 import zmq
 import sounddevice as sd
-from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, 
-                               QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QTextBrowser, QLineEdit, 
-                               QPushButton, QLabel, QDialog, QFormLayout, QComboBox, 
-                               QDialogButtonBox, QCheckBox, QTabWidget, QSlider, QProgressBar)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, QWidget, QVBoxLayout,
+                                QHBoxLayout, QTextEdit, QTextBrowser, QLineEdit, QPushButton, QLabel,
+                                QDialog, QFormLayout, QComboBox, QDialogButtonBox, QCheckBox,
+                                QTabWidget, QSlider, QProgressBar, QStackedWidget, QButtonGroup,
+                                QSizePolicy)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPalette, QColor
 from PySide6.QtSql import QSqlDatabase
@@ -17,7 +18,8 @@ from PySide6.QtSql import QSqlDatabase
 from agentic_player.core.db_manager import DatabaseManager
 from agentic_player.core.settings import load_settings, save_settings
 from agentic_player.core.zmq_bridge import ZMQBridge
-from agentic_player.ui.library_widget import LibraryWidget
+from agentic_player.ui.pages import (HomePage, LibraryPage, GenresPage, PlaylistsPage,
+                                     NowPlayingPage, TrackCard)
 
 def init_qt_db(db_path="agentic_player.db"):
     db = QSqlDatabase.addDatabase("QSQLITE")
@@ -28,7 +30,6 @@ def init_qt_db(db_path="agentic_player.db"):
 
 def apply_dark_theme(app):
     app.setStyle("Fusion")
-    
     dark_palette = QPalette()
     dark_palette.setColor(QPalette.Window, QColor("#1e1e2e"))
     dark_palette.setColor(QPalette.WindowText, QColor("#cdd6f4"))
@@ -47,35 +48,53 @@ def apply_dark_theme(app):
 
     qss = """
     QWidget { font-size: 13px; }
-    QLabel#stageWidget { background-color: #181825; color: #cdd6f4; font-size: 20px; }
-    QLabel#summaryLabel, QLabel#statusLabel { color: #a6adc8; font-size: 11px; margin-bottom: 4px; }
-    QLineEdit#searchBar { padding: 5px; border-radius: 4px; background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; }
-    QLineEdit, QTextBrowser { background-color: #181825; color: #cdd6f4; border: 1px solid #45475a; padding: 4px; border-radius: 4px; }
-    QPushButton { background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 4px 14px; font-weight: bold; }
-    QPushButton:hover { background-color: #45475a; }
-    QPushButton:checked { background-color: #89b4fa; color: #1e1e2e; }
-    QPushButton#sendButton { background-color: #89b4fa; color: #1e1e2e; }
-    QPushButton#sendButton:hover { background-color: #b4befe; }
-    QPushButton#muteButton { padding: 4px; font-size: 15px; }
-    QPushButton#muteButton:checked { background-color: #f38ba8; color: #1e1e2e; }
-    
-    QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 4px; background-color: #181825; }
-    QProgressBar#micMeter::chunk { background-color: #a6e3a1; width: 4px; margin: 1px; }
+    QLabel#brand { font-size: 16px; font-weight: bold; color: #f38ba8; }
+    QLabel#sectionHeader { font-size: 15px; font-weight: bold; }
+    QLabel#nowTitle { font-size: 18px; font-weight: bold; }
+    QLabel#summaryLabel, QLabel#statusLabel { color: #a6adc8; font-size: 11px; }
+    QLabel#cardTitle { font-weight: bold; }
+    QLabel#cardSub { color: #a6adc8; font-size: 11px; }
 
-    QTreeWidget { background-color: #181825; alternate-background-color: #1e1e2e; border: 1px solid #45475a; border-radius: 4px; }
-    QHeaderView::section { background-color: #313244; color: #cdd6f4; padding: 4px; border: 1px solid #45475a; }
+    #topBar { background: #181825; border-bottom: 1px solid #45475a; }
+    #sidebar { background: #181825; border-right: 1px solid #45475a; }
+    #miniPlayer { background: #181825; border-top: 1px solid #45475a; }
+    #stageVideo { background: #000; }
+    #stageArt { background: #181825; color: #cdd6f4; font-size: 40px; }
+
+    QPushButton#navButton { text-align: left; padding: 9px 14px; border: none; border-radius: 8px; background: transparent; color: #cdd6f4; }
+    QPushButton#navButton:hover { background: #313244; }
+    QPushButton#navButton:checked { background: #313244; color: #89b4fa; font-weight: bold; }
+
+    QLineEdit#globalSearch { padding: 7px 12px; border-radius: 16px; background: #313244; color: #cdd6f4; border: 1px solid #45475a; }
+    QLineEdit, QTextBrowser { background: #181825; color: #cdd6f4; border: 1px solid #45475a; padding: 4px; border-radius: 4px; }
+    QPushButton { background: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 4px 14px; font-weight: bold; }
+    QPushButton:hover { background: #45475a; }
+    QPushButton:checked { background: #89b4fa; color: #1e1e2e; }
+    QPushButton#sendButton { background: #89b4fa; color: #1e1e2e; }
+    QPushButton#sendButton:hover { background: #b4befe; }
+    QPushButton#muteButton { padding: 4px; font-size: 15px; }
+    QPushButton#muteButton:checked { background: #f38ba8; color: #1e1e2e; }
+    QPushButton#playButton { min-width: 52px; font-size: 16px; }
+
+    QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 4px; background: #181825; }
+    QProgressBar#micMeter::chunk { background: #a6e3a1; width: 4px; margin: 1px; }
+
+    QTreeWidget, QListWidget { background: #181825; alternate-background-color: #1e1e2e; border: 1px solid #45475a; border-radius: 4px; }
+    QHeaderView::section { background: #313244; color: #cdd6f4; padding: 4px; border: 1px solid #45475a; }
     QDockWidget { color: #cdd6f4; font-weight: bold; }
     QDockWidget::title { background: #313244; padding-left: 5px; padding-top: 4px; border-radius: 4px; }
-    QComboBox { background-color: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 2px 8px; }
+    QComboBox { background: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 2px 8px; }
     QComboBox::drop-down { border-left: 1px solid #45475a; }
-    QTabWidget::pane { border: 1px solid #45475a; background-color: #181825; border-radius: 4px; }
+    QTabWidget::pane { border: 1px solid #45475a; background: #181825; border-radius: 4px; }
     QTabBar::tab { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 6px 12px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
     QTabBar::tab:selected { background: #181825; border-bottom-color: #181825; font-weight: bold; }
-    
+
     QSlider::groove:horizontal { border: 1px solid #45475a; height: 6px; background: #1e1e2e; border-radius: 3px; margin: 2px 0; }
     QSlider::sub-page:horizontal { background: #89b4fa; border-radius: 3px; }
     QSlider::handle:horizontal { background: #cdd6f4; border: 1px solid #45475a; width: 14px; margin: -5px 0; border-radius: 7px; }
     QSlider::handle:horizontal:hover { background: #f38ba8; }
+
+    QScrollArea { border: none; }
     """
     app.setStyleSheet(qss)
 
@@ -85,78 +104,63 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Application Settings")
         self.setMinimumWidth(500)
         self.setMinimumHeight(450)
-        
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        
+
         hw_tab = QWidget()
         hw_layout = QFormLayout(hw_tab)
         self.mic_combo = QComboBox()
         self.spk_combo = QComboBox()
         self.mic_combo.addItem("Auto-Detect (System Default)", None)
         self.spk_combo.addItem("Auto-Detect (System Default)", None)
-        
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
             if dev['max_input_channels'] > 0:
                 self.mic_combo.addItem(f"[{i}] {dev['name']}", i)
             if dev['max_output_channels'] > 0:
                 self.spk_combo.addItem(f"[{i}] {dev['name']}", i)
-                
         hw_layout.addRow("Microphone Input:", self.mic_combo)
         hw_layout.addRow("Speaker Output:", self.spk_combo)
-        
+
         ai_tab = QWidget()
         ai_layout = QFormLayout(ai_tab)
-        
         self.llm_model_combo = QComboBox()
         self.llm_model_combo.setEditable(True)
         self.llm_model_combo.addItems([
             "ollama/granite4.2:8b-q8_0", "ollama/llama3.1", "ollama/mistral", "ollama/qwen2.5"
         ])
         self.llm_api_input = QLineEdit("http://localhost:11434")
-        
         self.search_shows_check = QCheckBox("Enable Web Search & Links (Music Shows)")
         self.search_shows_check.setChecked(True)
-        
-        # --- KOKORO TTS TOOLS ---
         self.kokoro_voice_combo = QComboBox()
         self.kokoro_voice_combo.addItems([
-            "af_bella (American Female)",
-            "af_sarah (American Female)",
-            "af_sky (American Female)",
-            "af_nicole (American Female)",
-            "am_adam (American Male)",
-            "am_michael (American Male)",
-            "am_onyx (American Male)",
-            "bf_emma (British Female)",
-            "bm_george (British Male)"
+            "af_bella (American Female)", "af_sarah (American Female)",
+            "af_sky (American Female)", "af_nicole (American Female)",
+            "am_adam (American Male)", "am_michael (American Male)",
+            "am_onyx (American Male)", "bf_emma (British Female)", "bm_george (British Male)"
         ])
-        
         self.kokoro_speed = QSlider(Qt.Horizontal)
         self.kokoro_speed.setRange(50, 150)
         self.kokoro_speed.setValue(100)
         self.kokoro_speed.setTickPosition(QSlider.TicksBelow)
         self.kokoro_speed.setTickInterval(10)
-        
         ai_layout.addRow("LLM Model:", self.llm_model_combo)
         ai_layout.addRow("Ollama API URL:", self.llm_api_input)
         ai_layout.addRow("", self.search_shows_check)
         ai_layout.addRow(QLabel("--- Text-to-Speech ---"))
         ai_layout.addRow("Kokoro Voice:", self.kokoro_voice_combo)
         ai_layout.addRow("Kokoro Speed (50%-150%):", self.kokoro_speed)
-        
+
         ui_tab = QWidget()
         ui_layout = QFormLayout(ui_tab)
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Catppuccin Mocha (Dark)", "Light Mode"])
         ui_layout.addRow("Theme:", self.theme_combo)
-        
+
         self.tabs.addTab(hw_tab, "🎧 Hardware")
         self.tabs.addTab(ai_tab, "🧠 AI Models & TTS")
         self.tabs.addTab(ui_tab, "🎨 Appearance")
 
-        # --- Prefill from persisted settings ---
         current = current or {}
         for combo, key in [(self.mic_combo, "mic_name"), (self.spk_combo, "spk_name")]:
             idx = combo.findText(current.get(key) or "")
@@ -172,12 +176,11 @@ class SettingsDialog(QDialog):
         self.kokoro_speed.setValue(int(round(float(current.get("kokoro_speed", 1.0)) * 100)))
 
         main_layout.addWidget(self.tabs)
-        
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
-        
+
     def get_all_settings(self):
         return {
             "mic_device_id": self.mic_combo.currentData(),
@@ -194,19 +197,16 @@ class SettingsDialog(QDialog):
 class AgenticPlayerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Agentic Media Player")
-        self.resize(1240, 820)
+        self.setWindowTitle("Agentic Player")
+        self.resize(1280, 860)
 
         self.zmq_context = zmq.Context()
         self.cmd_socket = self.zmq_context.socket(zmq.PUSH)
-        self.cmd_socket.connect("tcp://127.0.0.1:5559") 
-        
+        self.cmd_socket.connect("tcp://127.0.0.1:5559")
         self.agent_socket = self.zmq_context.socket(zmq.PUSH)
         self.agent_socket.connect("tcp://127.0.0.1:5555")
-        
         self.voice_socket = self.zmq_context.socket(zmq.PUSH)
         self.voice_socket.connect("tcp://127.0.0.1:5560")
-        
         self.config_pub_socket = self.zmq_context.socket(zmq.PUB)
         self.config_pub_socket.bind("tcp://127.0.0.1:5561")
 
@@ -218,21 +218,243 @@ class AgenticPlayerWindow(QMainWindow):
 
         self._setup_ui()
         self._load_persisted_settings()
-        
-        self.zmq_bridge.download_complete.connect(self.library_widget.refresh_library)
-        self.library_widget.play_collection_requested.connect(self.send_play_collection_command)
+
+        self.zmq_bridge.download_complete.connect(self.on_library_changed)
         self.zmq_bridge.chat_received.connect(self.display_ai_message)
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
         self.zmq_bridge.track_changed.connect(self.on_track_changed)
+        self.zmq_bridge.state_changed.connect(self.on_player_state)
+
+    # ---------------- UI construction ----------------
+
+    def _setup_ui(self):
+        shell = QWidget()
+        root = QVBoxLayout(shell)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Top bar
+        top = QWidget()
+        top.setObjectName("topBar")
+        top.setFixedHeight(56)
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(16, 8, 16, 8)
+        brand = QLabel("▶ AgenticPlayer")
+        brand.setObjectName("brand")
+        tl.addWidget(brand)
+        tl.addStretch()
+        self.search_box = QLineEdit()
+        self.search_box.setObjectName("globalSearch")
+        self.search_box.setPlaceholderText("🔍 Search your library…")
+        self.search_box.setFixedWidth(420)
+        self.search_box.textChanged.connect(self.on_search_changed)
+        tl.addWidget(self.search_box, Qt.AlignCenter)
+        tl.addStretch()
+        self.mic_status_label = QLabel("🎤 Auto")
+        self.mic_status_label.setObjectName("statusLabel")
+        self.spk_status_label = QLabel("🔊 Auto")
+        self.spk_status_label.setObjectName("statusLabel")
+        tl.addWidget(self.mic_status_label)
+        tl.addSpacing(8)
+        tl.addWidget(self.spk_status_label)
+        tl.addSpacing(8)
+        self.settings_button = QPushButton("⚙️")
+        self.settings_button.clicked.connect(self.open_settings)
+        tl.addWidget(self.settings_button)
+        root.addWidget(top)
+
+        # Middle: sidebar + page stack
+        middle = QHBoxLayout()
+        middle.setContentsMargins(0, 0, 0, 0)
+        middle.setSpacing(0)
+
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(200)
+        sl = QVBoxLayout(sidebar)
+        sl.setContentsMargins(8, 12, 8, 12)
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self.pages = QStackedWidget()
+
+        self.home_page = HomePage(self.db_manager)
+        self.library_page = LibraryPage(self.db_manager)
+        self.genres_page = GenresPage(self.db_manager)
+        self.playlists_page = PlaylistsPage(self.db_manager)
+        self.now_playing_page = NowPlayingPage()
+
+        page_specs = [
+            ("🏠  Home", self.home_page),
+            ("🗂  Library", self.library_page),
+            ("🎸  Genres", self.genres_page),
+            ("📃  Playlists", self.playlists_page),
+            ("▶  Now Playing", self.now_playing_page),
+        ]
+        for label, page in page_specs:
+            self.pages.addWidget(page)
+            btn = QPushButton(label)
+            btn.setObjectName("navButton")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked=False, i=self.pages.indexOf(page): self.pages.setCurrentIndex(i))
+            self.nav_group.addButton(btn)
+            sl.addWidget(btn)
+
+        sl.addStretch()
+        self.agent_toggle = QPushButton("🤖  Agent")
+        self.agent_toggle.setObjectName("navButton")
+        self.agent_toggle.setCheckable(True)
+        self.agent_toggle.setChecked(True)
+        self.agent_toggle.clicked.connect(lambda checked: self.agent_dock.setVisible(checked))
+        sl.addWidget(self.agent_toggle)
+
+        middle.addWidget(sidebar)
+        middle.addWidget(self.pages, 1)
+        root.addLayout(middle, 1)
+
+        # Mini player
+        mini = QWidget()
+        mini.setObjectName("miniPlayer")
+        mini.setFixedHeight(76)
+        ml = QHBoxLayout(mini)
+        ml.setContentsMargins(16, 8, 16, 8)
+        ml.setSpacing(12)
+
+        self.now_thumb = QLabel("🎵")
+        self.now_thumb.setFixedSize(56, 56)
+        self.now_thumb.setAlignment(Qt.AlignCenter)
+        self.now_thumb.setStyleSheet("background: #313244; border-radius: 6px; font-size: 22px;")
+        ml.addWidget(self.now_thumb)
+
+        info = QVBoxLayout()
+        self.now_title = QLabel("Nothing playing")
+        self.now_title.setObjectName("cardTitle")
+        self.now_artist = QLabel("")
+        self.now_artist.setObjectName("cardSub")
+        info.addWidget(self.now_title)
+        info.addWidget(self.now_artist)
+        ml.addLayout(info)
+        ml.addStretch()
+
+        self.prev_button = QPushButton("⏮")
+        self.prev_button.clicked.connect(lambda: self.send_transport_command("prev"))
+        self.play_button = QPushButton("▶")
+        self.play_button.setObjectName("playButton")
+        self.play_button.clicked.connect(self.on_play_clicked)
+        self.next_button = QPushButton("⏭")
+        self.next_button.clicked.connect(lambda: self.send_transport_command("next"))
+        self.stop_button = QPushButton("⏹")
+        self.stop_button.clicked.connect(lambda: self.send_transport_command("stop"))
+        for b in (self.prev_button, self.play_button, self.next_button, self.stop_button):
+            ml.addWidget(b)
+
+        ml.addStretch()
+        self.time_label = QLabel("00:00")
+        self.time_label.setFixedWidth(48)
+        self.time_label.setAlignment(Qt.AlignCenter)
+        self.duration_label = QLabel("00:00")
+        self.duration_label.setFixedWidth(48)
+        self.duration_label.setAlignment(Qt.AlignCenter)
+        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider.setRange(0, 1000)
+        self.seek_slider.sliderMoved.connect(self.on_slider_moved)
+        ml.addWidget(self.time_label)
+        ml.addWidget(self.seek_slider, 2)
+        ml.addWidget(self.duration_label)
+
+        self.mute_button = QPushButton("🔊")
+        self.mute_button.setObjectName("muteButton")
+        self.mute_button.setCheckable(True)
+        self.mute_button.setFixedSize(44, 30)
+        self.mute_button.toggled.connect(self.on_mute_toggled)
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setMaximumWidth(120)
+        self.volume_slider.valueChanged.connect(self.on_volume_changed)
+        self.volume_slider.sliderReleased.connect(self.on_volume_released)
+        ml.addWidget(self.mute_button)
+        ml.addWidget(self.volume_slider)
+        root.addWidget(mini)
+
+        self.setCentralWidget(shell)
+
+        # Pages -> player
+        for page in (self.home_page, self.library_page, self.genres_page):
+            page.play_requested.connect(self.send_play_collection_command)
+        self.playlists_page.play_requested.connect(self.send_play_collection_command)
+        self.genres_page.menu_requested.connect(self.on_card_menu)
+        self.playlists_page.menu_requested.connect(self.on_playlist_card_menu)
+
+        # Agent dock
+        self.agent_dock = QDockWidget("🤖 Agent", self)
+        self.agent_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        agent_container = QWidget()
+        al = QVBoxLayout(agent_container)
+
+        self.chat_history = QTextBrowser()
+        self.chat_history.setOpenExternalLinks(True)
+        self.chat_history.setReadOnly(True)
+        al.addWidget(self.chat_history, 1)
+
+        input_row = QHBoxLayout()
+        self.text_input = QLineEdit()
+        self.text_input.setPlaceholderText("Ask anything, or say: play / skip / shuffle…")
+        self.text_input.returnPressed.connect(self.send_chat_command)
+        self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("sendButton")
+        self.send_button.clicked.connect(self.send_chat_command)
+        input_row.addWidget(self.text_input)
+        input_row.addWidget(self.send_button)
+        al.addLayout(input_row)
+
+        toggle_row = QHBoxLayout()
+        self.stt_toggle = QCheckBox("STT:")
+        self.stt_toggle.setChecked(True)
+        self.stt_toggle.toggled.connect(self.on_inference_toggled)
+        self.stt_combo = QComboBox()
+        self.stt_combo.addItems(["Qwen3-ASR (1.7B)"])
+        self.stt_combo.currentIndexChanged.connect(self.on_inference_toggled)
+        self.tts_toggle = QCheckBox("TTS:")
+        self.tts_toggle.setChecked(True)
+        self.tts_toggle.toggled.connect(self.on_inference_toggled)
+        self.tts_combo = QComboBox()
+        self.tts_combo.addItems(["Kokoro-82M (Fast)"])
+        self.tts_combo.currentIndexChanged.connect(self.on_inference_toggled)
+        for w in (self.stt_toggle, self.stt_combo, self.tts_toggle, self.tts_combo):
+            toggle_row.addWidget(w)
+        toggle_row.addStretch()
+        self.always_on_toggle = QCheckBox("Always On")
+        self.always_on_toggle.toggled.connect(self.toggle_always_on)
+        toggle_row.addWidget(self.always_on_toggle)
+        al.addLayout(toggle_row)
+
+        ptt_row = QHBoxLayout()
+        self.ptt_button = QPushButton("🎤 Push to Talk")
+        self.ptt_button.setMinimumHeight(45)
+        self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
+        self.ptt_button.pressed.connect(self.start_voice)
+        self.ptt_button.released.connect(self.stop_voice)
+        ptt_row.addWidget(self.ptt_button, 1)
+        al.addLayout(ptt_row)
+
+        self.mic_meter = QProgressBar()
+        self.mic_meter.setRange(0, 100)
+        self.mic_meter.setTextVisible(False)
+        self.mic_meter.setFixedHeight(8)
+        self.mic_meter.setObjectName("micMeter")
+        al.addWidget(self.mic_meter)
+
+        self.agent_dock.setWidget(agent_container)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.agent_dock)
+        self.agent_dock.visibilityChanged.connect(self.agent_toggle.setChecked)
+
+        self.pages.setCurrentIndex(0)
+        self.nav_group.buttons()[0].setChecked(True)
+
+    # ---------------- settings / persistence ----------------
 
     def _load_persisted_settings(self):
-        """Apply settings.json to the UI at boot. Workers read the same file
-        themselves, so nothing is broadcast here (a boot-time PUB would be
-        lost anyway - subscribers are still connecting)."""
         s = load_settings()
-
-        # Inference toggles - block signals so we don't broadcast/save mid-boot
         for w in (self.stt_toggle, self.tts_toggle, self.stt_combo, self.tts_combo):
             w.blockSignals(True)
         self.stt_toggle.setChecked(s.get("stt_enabled", True))
@@ -242,10 +464,6 @@ class AgenticPlayerWindow(QMainWindow):
         for w in (self.stt_toggle, self.tts_toggle, self.stt_combo, self.tts_combo):
             w.blockSignals(False)
 
-        self.ptt_button.setEnabled(self.stt_toggle.isChecked() and not self.always_on_toggle.isChecked())
-        self.always_on_toggle.setEnabled(self.stt_toggle.isChecked())
-
-        # Volume / mute - restored visually; player worker boots from the same file
         self.volume_slider.blockSignals(True)
         self.volume_slider.setValue(int(s.get("volume", 100)))
         self.volume_slider.blockSignals(False)
@@ -254,50 +472,136 @@ class AgenticPlayerWindow(QMainWindow):
         self.mute_button.setText("🔇" if self.mute_button.isChecked() else "🔊")
         self.mute_button.blockSignals(False)
 
+        self.ptt_button.setEnabled(self.stt_toggle.isChecked() and not self.always_on_toggle.isChecked())
+        self.always_on_toggle.setEnabled(self.stt_toggle.isChecked())
+
         mic_name = s.get("mic_name") or "Auto-Detect (System Default)"
         mic_name = mic_name.split("] ")[-1] if "] " in mic_name else mic_name
-        self.mic_status_label.setText(f"🎤 In: {mic_name[:25]}")
+        self.mic_status_label.setText(f"🎤 {mic_name[:20]}")
         spk_name = s.get("spk_name") or "Auto-Detect (System Default)"
         spk_name = spk_name.split("] ")[-1] if "] " in spk_name else spk_name
-        self.spk_status_label.setText(f"🔊 Out: {spk_name[:25]}")
+        self.spk_status_label.setText(f"🔊 {spk_name[:20]}")
 
-    def send_play_collection_command(self, files, start_path):
-        """Play a group of files as a queue context, starting at start_path.
-        Emitted by the Library (artist / genre / playlist)."""
-        win_id = int(self.central_widget.winId())
-        self.cmd_socket.send_json({"action": "play_collection", "files": list(files), "start_path": start_path, "win_id": win_id})
+    # ---------------- playback plumbing ----------------
 
     def send_transport_command(self, action):
-        win_id = int(self.central_widget.winId())
-        self.cmd_socket.send_json({"action": action, "win_id": win_id})
+        self.cmd_socket.send_json({"action": action})
+
+    def send_play_collection_command(self, files, start_path):
+        """Clicking any card/tree item: jump to Now Playing (YT watch-page
+        behavior) and hand the player the collection as its play context."""
+        self.pages.setCurrentWidget(self.now_playing_page)
+        self.now_playing_page.set_queue(files, start_path)
+        win_id = int(self.now_playing_page.video_surface.winId())
+        self.cmd_socket.send_json({
+            "action": "play_collection",
+            "files": list(files),
+            "start_path": start_path,
+            "win_id": win_id,
+        })
+
+    def on_play_clicked(self):
+        if self.play_button.text() == "⏸":
+            self.send_transport_command("pause")
+        else:
+            self.send_transport_command("play")
+
+    def on_player_state(self, msg):
+        state = msg.get("state", "stopped")
+        self.play_button.setText("⏸" if state == "playing" else "▶")
 
     def on_track_changed(self, file_path):
-        if not file_path: return
-        is_video = "downloads/video" in file_path.replace('\\', '/')
+        if not file_path:
+            return
+        is_video = "downloads/video" in file_path.replace("\\", "/")
+        title, artist, thumb = os.path.basename(file_path), "", None
+        with sqlite3.connect(self.db_manager.db_path) as conn:
+            row = conn.execute(
+                "SELECT title, artist, thumbnail_path FROM tracks WHERE file_path=?",
+                (file_path,)).fetchone()
+            if row:
+                title, artist, thumb = row[0] or title, row[1] or "", row[2]
+        self.now_title.setText(title)
+        self.now_artist.setText(artist or "Unknown Artist")
         if is_video:
-            self.central_widget.clear()
-        else:
-            with sqlite3.connect(self.db_manager.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT thumbnail_path, title FROM tracks WHERE file_path=?", (file_path,))
-                result = cursor.fetchone()
-                if result and result[0] and os.path.exists(result[0]):
-                    pixmap = QPixmap(result[0])
-                    self.central_widget.setPixmap(pixmap.scaled(self.central_widget.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                else:
-                    title = result[1] if result else os.path.basename(file_path)
-                    self.central_widget.clear()
-                    self.central_widget.setText(f"🎵 Playing: {title}")
+            self.pages.setCurrentWidget(self.now_playing_page)
+        self.now_playing_page.set_track(title, artist, thumb, is_video, file_path)
+
+    def on_library_changed(self):
+        self.home_page.refresh()
+        self.library_page.refresh()
+        self.genres_page.refresh()
+        self.playlists_page.refresh()
+
+    def on_search_changed(self, text):
+        page = self.pages.currentWidget()
+        if hasattr(page, "set_filter"):
+            page.set_filter(text)
+
+    # ---------------- card context menus ----------------
+
+    def on_card_menu(self, payload):
+        card, pos = payload if isinstance(payload, tuple) else (payload, None)
+        m = QMenu(self)
+        add_menu = m.addMenu("➕ Add to playlist")
+        for pid, name, count in self.db_manager.get_playlists():
+            add_menu.addAction(f"{name} ({count})", lambda checked=False, pid=pid, c=card:
+                                (self.db_manager.add_track_to_playlist(pid, c.t_id),
+                                 self.playlists_page.refresh()))
+        add_menu.addSeparator()
+        add_menu.addAction("✨ New playlist…", lambda c=card: self._new_playlist_with([c.t_id]))
+        m.addSeparator()
+        m.addAction("🎸 Set genre…", lambda c=card: self._set_genre([c]))
+        m.exec(pos)
+
+    def on_playlist_card_menu(self, payload):
+        card, section, pos = payload
+        m = QMenu(self)
+        add_menu = m.addMenu("➕ Add to playlist")
+        for pid, name, count in self.db_manager.get_playlists():
+            if pid == section.pid:
+                continue
+            add_menu.addAction(f"{name} ({count})", lambda checked=False, pid=pid, c=card:
+                                (self.db_manager.add_track_to_playlist(pid, c.t_id),
+                                 self.playlists_page.refresh()))
+        add_menu.addSeparator()
+        add_menu.addAction("✨ New playlist…", lambda c=card: self._new_playlist_with([c.t_id]))
+        m.addSeparator()
+        m.addAction("➖ Remove from this playlist", lambda c=card, s=section:
+                    (self.db_manager.remove_track_from_playlist(s.pid, c.t_id),
+                     self.playlists_page.refresh()))
+        m.addAction("🎸 Set genre…", lambda c=card: self._set_genre([c]))
+        m.exec(pos)
+
+    def _new_playlist_with(self, t_ids):
+        name, ok = QInputDialog.getText(self, "New playlist", "Playlist name:")
+        if not (ok and name.strip()):
+            return
+        pid = self.db_manager.create_playlist(name)
+        if pid is None:
+            QMessageBox.warning(self, "New playlist", f"'{name}' already exists.")
+            return
+        for t in t_ids:
+            self.db_manager.add_track_to_playlist(pid, t)
+        self.playlists_page.refresh()
+
+    def _set_genre(self, cards):
+        for c in cards:
+            text, ok = QInputDialog.getText(self, "Set genre", f"Genre for '{c.title}':", text=c.genre or "")
+            if not ok:
+                return
+            self.db_manager.set_track_genre(c.t_id, text.strip())
+            self.genres_page.refresh()
+
+    # ---------------- transport / sliders ----------------
 
     def on_slider_moved(self, value):
-        pos = value / 1000.0
-        self.cmd_socket.send_json({"action": "seek", "value": pos})
+        self.cmd_socket.send_json({"action": "seek", "value": value / 1000.0})
 
     def on_volume_changed(self, value):
         self.cmd_socket.send_json({"action": "set_volume", "value": value})
 
     def on_volume_released(self):
-        # Persist once per drag (valueChanged only sends to the player worker)
         save_settings({"volume": self.volume_slider.value()})
 
     def on_mute_toggled(self, checked):
@@ -306,8 +610,8 @@ class AgenticPlayerWindow(QMainWindow):
         self.cmd_socket.send_json({"action": "set_mute", "value": checked})
 
     def update_progress(self, pos, time_ms, length_ms):
-        if not self.slider.isSliderDown() and pos >= 0:
-            self.slider.setValue(int(pos * 1000))
+        if not self.seek_slider.isSliderDown() and pos >= 0:
+            self.seek_slider.setValue(int(pos * 1000))
         def fmt_time(ms):
             if ms <= 0: return "00:00"
             s = ms // 1000
@@ -317,8 +621,9 @@ class AgenticPlayerWindow(QMainWindow):
         self.duration_label.setText(fmt_time(length_ms))
 
     def update_mic_volume(self, volume):
-        val = min(int(volume * 400), 100)
-        self.mic_meter.setValue(val)
+        self.mic_meter.setValue(min(int(volume * 400), 100))
+
+    # ---------------- agent / voice ----------------
 
     def send_chat_command(self):
         user_text = self.text_input.text().strip()
@@ -335,7 +640,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.ptt_button.setStyleSheet("background-color: #f38ba8; color: #1e1e2e; font-weight: bold; border-radius: 22px; border: 2px solid #f38ba8; font-size: 14px;")
         self.ptt_button.setText("🎙️ Listening...")
         self.voice_socket.send_json({"action": "start"})
-        
+
     def stop_voice(self):
         if not self.stt_toggle.isChecked() or self.always_on_toggle.isChecked(): return
         self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
@@ -344,12 +649,10 @@ class AgenticPlayerWindow(QMainWindow):
 
     def toggle_always_on(self, checked):
         self.ptt_button.setEnabled(not checked)
-        if checked:
-            self.ptt_button.setStyleSheet("background-color: #313244; color: #6c7086; font-weight: bold; border-radius: 22px; border: 2px solid #45475a; font-size: 14px;")
-            self.ptt_button.setText("🎙️ Auto-Listening Mode")
-        else:
+        if not checked:
             self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
-            self.ptt_button.setText("🎤 Push to Talk")
+        else:
+            self.ptt_button.setStyleSheet("background-color: #313244; color: #6c7086; font-weight: bold; border-radius: 22px; border: 2px solid #45475a; font-size: 14px;")
         self.voice_socket.send_json({"action": "toggle_always_on", "value": checked})
 
     def on_inference_toggled(self):
@@ -357,7 +660,6 @@ class AgenticPlayerWindow(QMainWindow):
         tts_active = self.tts_toggle.isChecked()
         self.ptt_button.setEnabled(stt_active and not self.always_on_toggle.isChecked())
         self.always_on_toggle.setEnabled(stt_active)
-
         save_settings({
             "stt_enabled": stt_active,
             "tts_enabled": tts_active,
@@ -367,7 +669,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.config_pub_socket.send_json({
             "type": "inference_toggle",
             "config": {
-                "stt_enabled": stt_active, 
+                "stt_enabled": stt_active,
                 "tts_enabled": tts_active,
                 "stt_engine": self.stt_combo.currentText(),
                 "tts_engine": self.tts_combo.currentText()
@@ -381,15 +683,12 @@ class AgenticPlayerWindow(QMainWindow):
             save_settings(config)
             mic_disp = config["mic_name"].split("] ")[-1] if "] " in config["mic_name"] else config["mic_name"]
             spk_disp = config["spk_name"].split("] ")[-1] if "] " in config["spk_name"] else config["spk_name"]
-            self.mic_status_label.setText(f"🎤 In: {mic_disp[:25]}")
-            self.spk_status_label.setText(f"🔊 Out: {spk_disp[:25]}")
-            
-            # Broadcast the full config so live workers hot-swap
+            self.mic_status_label.setText(f"🎤 {mic_disp[:20]}")
+            self.spk_status_label.setText(f"🔊 {spk_disp[:20]}")
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
             self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 
     def closeEvent(self, event):
-        # Belt and suspenders: persist final volume state on exit
         save_settings({
             "volume": self.volume_slider.value(),
             "muted": self.mute_button.isChecked(),
@@ -397,156 +696,6 @@ class AgenticPlayerWindow(QMainWindow):
         print("[*] Shutting down ZMQ Bridge gracefully...")
         self.zmq_bridge.stop()
         event.accept()
-
-    def _setup_ui(self):
-        self.central_widget = QLabel("Stage (Album Art / Audio Visualizer)", alignment=Qt.AlignCenter)
-        self.central_widget.setObjectName("stageWidget")
-        self.setCentralWidget(self.central_widget)
-
-        left_dock = QDockWidget("Library", self)
-        left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.library_widget = LibraryWidget()
-        left_dock.setWidget(self.library_widget)
-        self.addDockWidget(Qt.LeftDockWidgetArea, left_dock)
-
-        right_dock = QDockWidget("Agent Terminal", self)
-        right_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        agent_container = QWidget()
-        agent_layout = QVBoxLayout(agent_container)
-        
-        self.chat_history = QTextBrowser()
-        self.chat_history.setOpenExternalLinks(True)
-        self.chat_history.setReadOnly(True)
-        
-        input_layout = QHBoxLayout()
-        self.text_input = QLineEdit()
-        self.text_input.setPlaceholderText("Type a command or ask a music question...")
-        self.text_input.returnPressed.connect(self.send_chat_command)
-        
-        self.send_button = QPushButton("Send")
-        self.send_button.setObjectName("sendButton")
-        self.send_button.clicked.connect(self.send_chat_command)
-        
-        input_layout.addWidget(self.text_input)
-        input_layout.addWidget(self.send_button)
-
-        toggle_layout = QHBoxLayout()
-        self.stt_toggle = QCheckBox("STT:")
-        self.stt_toggle.setChecked(True)
-        self.stt_toggle.toggled.connect(self.on_inference_toggled)
-        self.stt_combo = QComboBox()
-        self.stt_combo.addItems(["Qwen3-ASR (1.7B)"])
-        self.stt_combo.currentIndexChanged.connect(self.on_inference_toggled)
-        self.tts_toggle = QCheckBox("TTS:")
-        self.tts_toggle.setChecked(True)
-        self.tts_toggle.toggled.connect(self.on_inference_toggled)
-        self.tts_combo = QComboBox()
-        self.tts_combo.addItems(["Kokoro-82M (Fast)"])
-        self.tts_combo.currentIndexChanged.connect(self.on_inference_toggled)
-        
-        toggle_layout.addWidget(self.stt_toggle)
-        toggle_layout.addWidget(self.stt_combo)
-        toggle_layout.addWidget(self.tts_toggle)
-        toggle_layout.addWidget(self.tts_combo)
-        
-        bottom_buttons_layout = QHBoxLayout()
-        
-        ptt_layout = QVBoxLayout()
-        ptt_controls = QHBoxLayout()
-        
-        self.ptt_button = QPushButton("🎤 Push to Talk")
-        self.ptt_button.setMinimumHeight(45)
-        self.ptt_button.setStyleSheet("background-color: #181825; color: #a6e3a1; font-weight: bold; border-radius: 22px; border: 2px solid #a6e3a1; font-size: 14px;")
-        self.ptt_button.pressed.connect(self.start_voice)
-        self.ptt_button.released.connect(self.stop_voice)
-        
-        self.always_on_toggle = QCheckBox("Always On")
-        self.always_on_toggle.toggled.connect(self.toggle_always_on)
-        
-        ptt_controls.addWidget(self.ptt_button)
-        ptt_controls.addWidget(self.always_on_toggle)
-        
-        self.mic_meter = QProgressBar()
-        self.mic_meter.setRange(0, 100)
-        self.mic_meter.setTextVisible(False)
-        self.mic_meter.setFixedHeight(8)
-        self.mic_meter.setObjectName("micMeter")
-        
-        ptt_layout.addLayout(ptt_controls)
-        ptt_layout.addWidget(self.mic_meter)
-
-        status_layout = QVBoxLayout()
-        self.mic_status_label = QLabel("🎤 In: Auto-Detect")
-        self.mic_status_label.setObjectName("statusLabel")
-        self.spk_status_label = QLabel("🔊 Out: Auto-Detect")
-        self.spk_status_label.setObjectName("statusLabel")
-        status_layout.addWidget(self.mic_status_label)
-        status_layout.addWidget(self.spk_status_label)
-        
-        self.settings_button = QPushButton("⚙️")
-        self.settings_button.setMinimumHeight(45)
-        self.settings_button.setMinimumWidth(45)
-        self.settings_button.clicked.connect(self.open_settings)
-        
-        bottom_buttons_layout.addLayout(ptt_layout)
-        bottom_buttons_layout.addLayout(status_layout)
-        bottom_buttons_layout.addWidget(self.settings_button)
-        
-        agent_layout.addWidget(self.chat_history)
-        agent_layout.addLayout(input_layout)
-        agent_layout.addLayout(toggle_layout)
-        agent_layout.addLayout(bottom_buttons_layout)
-        right_dock.setWidget(agent_container)
-        self.addDockWidget(Qt.RightDockWidgetArea, right_dock)
-
-        bottom_dock = QDockWidget("Transport", self)
-        bottom_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        transport_container = QWidget()
-        transport_main_layout = QVBoxLayout(transport_container)
-        
-        progress_layout = QHBoxLayout()
-        self.time_label = QLabel("00:00")
-        self.time_label.setFixedWidth(50)
-        self.time_label.setAlignment(Qt.AlignCenter)
-        self.duration_label = QLabel("00:00")
-        self.duration_label.setFixedWidth(50)
-        self.duration_label.setAlignment(Qt.AlignCenter)
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 1000)
-        self.slider.sliderMoved.connect(self.on_slider_moved)
-        
-        self.mute_button = QPushButton("🔊")
-        self.mute_button.setObjectName("muteButton")
-        self.mute_button.setCheckable(True)
-        self.mute_button.setFixedSize(44, 30)
-        self.mute_button.setToolTip("Mute / Unmute")
-        self.mute_button.toggled.connect(self.on_mute_toggled)
-
-        self.volume_slider = QSlider(Qt.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setMaximumWidth(140)
-        self.volume_slider.setToolTip("Volume")
-        self.volume_slider.valueChanged.connect(self.on_volume_changed)
-        self.volume_slider.sliderReleased.connect(self.on_volume_released)
-
-        progress_layout.addWidget(self.time_label)
-        progress_layout.addWidget(self.slider)
-        progress_layout.addWidget(self.duration_label)
-        progress_layout.addWidget(self.mute_button)
-        progress_layout.addWidget(self.volume_slider)
-        
-        button_layout = QHBoxLayout()
-        for label, action in [("🔀 Shuffle", "toggle_shuffle"), ("⏮ Prev", "prev"), ("▶ Play", "play"), ("⏸ Pause", "pause"), ("⏹ Stop", "stop"), ("⏭ Next", "next")]:
-            btn = QPushButton(label)
-            btn.setMinimumHeight(40)
-            btn.clicked.connect(lambda checked=False, a=action: self.send_transport_command(a))
-            if label == "🔀 Shuffle": btn.setCheckable(True)
-            button_layout.addWidget(btn)
-
-        transport_main_layout.addLayout(progress_layout)
-        transport_main_layout.addLayout(button_layout)
-        bottom_dock.setWidget(transport_container)
-        self.addDockWidget(Qt.BottomDockWidgetArea, bottom_dock)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
