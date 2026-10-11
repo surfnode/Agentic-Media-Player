@@ -14,6 +14,7 @@ except ImportError:
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from agentic_player.agent.schemas import AgentResponse, Command
+from agentic_player.core.settings import load_settings
 
 client = instructor.from_litellm(completion, mode=instructor.Mode.JSON)
 
@@ -42,9 +43,12 @@ def start_router():
 
     print("[*] Agent Router started. Listening on Port 5555...")
 
-    llm_model = "ollama/granite4.2:8b-q8_0"
-    api_base = "http://localhost:11434"
-    web_search_enabled = True
+    # Boot config from settings.json (live updates still arrive on 5561)
+    s = load_settings()
+    llm_model = s.get("llm_model", "ollama/granite4.2:8b-q8_0")
+    api_base = s.get("llm_api", "http://localhost:11434")
+    web_search_enabled = s.get("web_search_enabled", True)
+    print(f"[*] Router config: model={llm_model} | api={api_base} | web_search={web_search_enabled}")
 
     system_prompt = (
         "You are the conversational intelligence layer of a local media player.\n"

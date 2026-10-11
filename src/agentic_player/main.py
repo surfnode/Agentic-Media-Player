@@ -15,6 +15,7 @@ from PySide6.QtGui import QPixmap, QPalette, QColor
 from PySide6.QtSql import QSqlDatabase
 
 from agentic_player.core.db_manager import DatabaseManager
+from agentic_player.core.settings import load_settings, save_settings
 from agentic_player.core.zmq_bridge import ZMQBridge
 from agentic_player.ui.library_widget import LibraryWidget
 
@@ -77,7 +78,7 @@ def apply_dark_theme(app):
     app.setStyleSheet(qss)
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, current=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Application Settings")
         self.setMinimumWidth(500)
@@ -116,7 +117,7 @@ class SettingsDialog(QDialog):
         self.search_shows_check = QCheckBox("Enable Web Search & Links (Music Shows)")
         self.search_shows_check.setChecked(True)
         
-        # --- NEW KOKORO TTS TOOLS ---
+        # --- KOKORO TTS TOOLS ---
         self.kokoro_voice_combo = QComboBox()
         self.kokoro_voice_combo.addItems([
             "af_bella (American Female)",
@@ -152,7 +153,22 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(hw_tab, "🎧 Hardware")
         self.tabs.addTab(ai_tab, "🧠 AI Models & TTS")
         self.tabs.addTab(ui_tab, "🎨 Appearance")
-        
+
+        # --- Prefill from persisted settings ---
+        current = current or {}
+        for combo, key in [(self.mic_combo, "mic_name"), (self.spk_combo, "spk_name")]:
+            idx = combo.findText(current.get(key) or "")
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        self.llm_model_combo.setCurrentText(current.get("llm_model") or "ollama/granite4.2:8b-q8_0")
+        self.llm_api_input.setText(current.get("llm_api") or "http://localhost:11434")
+        self.search_shows_check.setChecked(current.get("web_search_enabled", True))
+        voice_id = current.get("kokoro_voice") or "af_bella"
+        vidx = self.kokoro_voice_combo.findText(voice_id, Qt.MatchStartsWith)
+        if vidx >= 0:
+            self.kokoro_voice_combo.setCurrentIndex(vidx)
+        self.kokoro_speed.setValue(int(round(float(current.get("kokoro_speed", 1.0)) * 100)))
+
         main_layout.addWidget(self.tabs)
         
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -199,6 +215,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.zmq_bridge.start()
 
         self._setup_ui()
+        self._load_persisted_settings()
         
         self.zmq_bridge.download_complete.connect(self.library_widget.refresh_library)
         self.library_widget.play_requested.connect(self.send_play_command)
@@ -206,6 +223,32 @@ class AgenticPlayerWindow(QMainWindow):
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
         self.zmq_bridge.track_changed.connect(self.on_track_changed)
+
+    def _load_persisted_settings(self):
+        """Apply settings.json to the UI at boot. Workers read the same file
+        themselves, so nothing is broadcast here (a boot-time PUB would be
+        lost anyway - subscribers are still connecting)."""
+        s = load_settings()
+
+        # Inference toggles - block signals so we don't broadcast/save mid-boot
+        for w in (self.stt_toggle, self.tts_toggle, self.stt_combo, self.tts_combo):
+            w.blockSignals(True)
+        self.stt_toggle.setChecked(s.get("stt_enabled", True))
+        self.tts_toggle.setChecked(s.get("tts_enabled", True))
+        self.stt_combo.setCurrentText(s.get("stt_engine", "Qwen3-ASR (1.7B)"))
+        self.tts_combo.setCurrentText(s.get("tts_engine", "Kokoro-82M (Fast)"))
+        for w in (self.stt_toggle, self.tts_toggle, self.stt_combo, self.tts_combo):
+            w.blockSignals(False)
+
+        self.ptt_button.setEnabled(self.stt_toggle.isChecked() and not self.always_on_toggle.isChecked())
+        self.always_on_toggle.setEnabled(self.stt_toggle.isChecked())
+
+        mic_name = s.get("mic_name") or "Auto-Detect (System Default)"
+        mic_name = mic_name.split("] ")[-1] if "] " in mic_name else mic_name
+        self.mic_status_label.setText(f"🎤 In: {mic_name[:25]}")
+        spk_name = s.get("spk_name") or "Auto-Detect (System Default)"
+        spk_name = spk_name.split("] ")[-1] if "] " in spk_name else spk_name
+        self.spk_status_label.setText(f"🔊 Out: {spk_name[:25]}")
 
     def send_play_command(self, file_path):
         win_id = int(self.central_widget.winId())
@@ -289,6 +332,13 @@ class AgenticPlayerWindow(QMainWindow):
         tts_active = self.tts_toggle.isChecked()
         self.ptt_button.setEnabled(stt_active and not self.always_on_toggle.isChecked())
         self.always_on_toggle.setEnabled(stt_active)
+
+        save_settings({
+            "stt_enabled": stt_active,
+            "tts_enabled": tts_active,
+            "stt_engine": self.stt_combo.currentText(),
+            "tts_engine": self.tts_combo.currentText(),
+        })
         self.config_pub_socket.send_json({
             "type": "inference_toggle",
             "config": {
@@ -300,15 +350,16 @@ class AgenticPlayerWindow(QMainWindow):
         })
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
+        dialog = SettingsDialog(current=load_settings(), parent=self)
         if dialog.exec() == QDialog.Accepted:
             config = dialog.get_all_settings()
+            save_settings(config)
             mic_disp = config["mic_name"].split("] ")[-1] if "] " in config["mic_name"] else config["mic_name"]
             spk_disp = config["spk_name"].split("] ")[-1] if "] " in config["spk_name"] else config["spk_name"]
             self.mic_status_label.setText(f"🎤 In: {mic_disp[:25]}")
             self.spk_status_label.setText(f"🔊 Out: {spk_disp[:25]}")
             
-            # Broadcast the full config containing the new kokoro_voice and kokoro_speed keys
+            # Broadcast the full config so live workers hot-swap
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
             self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 

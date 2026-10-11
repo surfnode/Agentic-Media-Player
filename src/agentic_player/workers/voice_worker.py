@@ -6,7 +6,12 @@ import tempfile
 import os
 import torch
 import collections
+import sys
+from pathlib import Path
 from qwen_asr import Qwen3ASRModel
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from agentic_player.core.settings import load_settings
 
 def start_voice_worker():
     context = zmq.Context()
@@ -37,14 +42,16 @@ def start_voice_worker():
         print(f"[!] Failed to load Qwen3-ASR: {e}. Audio processing is paused.")
         asr_model = None
 
-    sample_rate = 16000 
-    current_mic_id = None
+    # Boot config from settings.json (live updates still arrive on 5561)
+    s = load_settings()
+    sample_rate = 16000
+    current_mic_id = s.get("mic_device_id", None)
     stream = None
     current_volume = 0.0
     
     capture_audio = False
     is_always_on = False
-    stt_enabled = True
+    stt_enabled = s.get("stt_enabled", True)
     audio_data = []
     ring_buffer = collections.deque(maxlen=15) 
     vad_silence_counter = 0
@@ -104,6 +111,7 @@ def start_voice_worker():
                 
         audio_data.clear()
 
+    print(f"[*] Voice Worker: stt_enabled={stt_enabled}")
     start_audio_stream(current_mic_id)
 
     while True:

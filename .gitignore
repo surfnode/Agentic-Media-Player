@@ -9,3 +9,6 @@ venv/
 # Runtime state (regenerated automatically)
 *.db
 downloads/
+
+# Per-machine settings (contains device indices)
+settings.json

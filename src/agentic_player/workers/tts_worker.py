@@ -2,7 +2,12 @@ import zmq
 import sounddevice as sd
 import torch
 import re
+import sys
+from pathlib import Path
 from kokoro import KPipeline
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from agentic_player.core.settings import load_settings
 
 def start_tts_worker():
     context = zmq.Context()
@@ -22,16 +27,18 @@ def start_tts_worker():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"[*] Loading Kokoro TTS on {device.upper()}...")
     
-    current_lang = 'a'
+    # Boot config from settings.json (live updates still arrive on 5561)
+    s = load_settings()
+    current_voice = s.get("kokoro_voice", "af_bella")
+    current_speed = float(s.get("kokoro_speed", 1.0))
+    tts_enabled = s.get("tts_enabled", True)
+    spk_device_id = s.get("spk_device_id", None)
+
+    current_lang = 'b' if current_voice.startswith('b') else 'a'
     pipeline = KPipeline(lang_code=current_lang, device=device)
-    
-    current_voice = "af_bella"
-    current_speed = 1.0
-    tts_enabled = True
-    spk_device_id = None
     sample_rate = 24000
 
-    print("[*] TTS Worker ready (Kokoro Only).")
+    print(f"[*] TTS Worker ready. voice={current_voice} speed={current_speed:.2f} tts_enabled={tts_enabled} spk={spk_device_id}")
 
     while True:
         socks = dict(poller.poll(100))
