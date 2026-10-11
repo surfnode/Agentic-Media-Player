@@ -13,6 +13,21 @@ from qwen_asr import Qwen3ASRModel
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from agentic_player.core.settings import load_settings
 
+
+def extract_asr_text(result):
+    """Pull the transcript string out of one qwen-asr result.
+
+    qwen-asr returns ASRTranscription objects (attribute access: result.text).
+    Also accepts dict-shaped results, so an API change back to dicts
+    won't break the worker again."""
+    if isinstance(result, dict):
+        return str(result.get("text") or "")
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return text
+    return ""
+
+
 def start_voice_worker():
     context = zmq.Context()
     ui_socket = context.socket(zmq.PULL)
@@ -98,7 +113,7 @@ def start_voice_worker():
             
             try:
                 results = asr_model.transcribe([temp_wav])
-                text = results[0].get("text", "").strip() if results else ""
+                text = extract_asr_text(results[0]).strip() if results else ""
             except Exception as e:
                 print(f"[!] Qwen-ASR Transcription error: {e}")
                 text = ""
