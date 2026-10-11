@@ -12,3 +12,6 @@ downloads/
 
 # Per-machine settings (contains device indices)
 settings.json
+
+# Runtime logs
+logs/

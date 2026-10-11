@@ -7,6 +7,9 @@ cd "$DIR"
 # Set PYTHONPATH so absolute imports work
 export PYTHONPATH="$DIR/src:$PYTHONPATH"
 
+# Unbuffered Python output -> log lines appear immediately, not in chunks
+export PYTHONUNBUFFERED=1
+
 # Explicitly activate the project's virtual environment
 if [ -d "venv" ]; then
     source venv/bin/activate
@@ -15,26 +18,32 @@ else
     exit 1
 fi
 
-echo "[*] Cleaning up existing ports..."
-# Kill any lingering worker processes on your app's ports
-# (5563 player-progress and 5564 voice-meter were missing before)
-fuser -k 5555/tcp 5556/tcp 5557/tcp 5559/tcp 5560/tcp 5561/tcp 5562/tcp 5563/tcp 5564/tcp 2>/dev/null
+# Timestamp every log line (no changes needed inside the workers)
+stamp() {
+  while IFS= read -r line; do
+    printf '%s %s\n' "$(date '+%F %T')" "$line"
+  done
+}
 
-# The TTS worker binds no port (it only connects), so fuser cannot see it.
-# A stale TTS process would double-speak - kill it by command line instead.
+mkdir -p logs
+
+echo "[*] Cleaning up existing ports..."
+# All bound ports + the TTS worker (binds no port, so fuser can't see it)
+fuser -k 5555/tcp 5556/tcp 5557/tcp 5559/tcp 5560/tcp 5561/tcp 5562/tcp 5563/tcp 5564/tcp 2>/dev/null
 pkill -f "python.*agentic_player/workers/tts_worker\.py" 2>/dev/null
 
 # Cleanup child processes when the UI closes
 trap "kill 0" EXIT
 
 echo "[*] Starting Agentic Media Player Services..."
+echo "[*] Worker logs: logs/*.log   (view live: ./logs.sh)"
 
-# Start background workers using the activated venv python
-python src/agentic_player/workers/player_worker.py &
-python src/agentic_player/workers/fetcher_worker.py &
-python src/agentic_player/workers/voice_worker.py &
-python src/agentic_player/agent/router_worker.py &
-python src/agentic_player/workers/tts_worker.py &
+# Each worker logs to its own file; the main terminal stays clean for the UI
+python src/agentic_player/workers/player_worker.py  2>&1 | stamp >> logs/player.log &
+python src/agentic_player/workers/fetcher_worker.py 2>&1 | stamp >> logs/fetcher.log &
+python src/agentic_player/workers/voice_worker.py   2>&1 | stamp >> logs/voice.log &
+python src/agentic_player/agent/router_worker.py    2>&1 | stamp >> logs/router.log &
+python src/agentic_player/workers/tts_worker.py     2>&1 | stamp >> logs/tts.log &
 
-# Launch the primary UI in the foreground
-python src/agentic_player/main.py
+# UI runs in the foreground: visible here AND logged
+python src/agentic_player/main.py 2>&1 | tee logs/ui.log
