@@ -1,6 +1,7 @@
 import zmq
 from PySide6.QtCore import Signal, QThread
 
+
 class ZMQBridge(QThread):
     progress_updated = Signal(float, int, int)
     mic_volume_updated = Signal(float)
@@ -15,11 +16,11 @@ class ZMQBridge(QThread):
 
     def run(self):
         context = zmq.Context()
-        
+
         router_sub = context.socket(zmq.SUB)
         router_sub.connect("tcp://127.0.0.1:5557")
         router_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        
+
         fetcher_sub = context.socket(zmq.SUB)
         fetcher_sub.connect("tcp://127.0.0.1:5562")
         fetcher_sub.setsockopt_string(zmq.SUBSCRIBE, "")
@@ -40,7 +41,7 @@ class ZMQBridge(QThread):
 
         while self._is_running:
             socks = dict(poller.poll(100))
-            
+
             if router_sub in socks:
                 try:
                     message = router_sub.recv_json(flags=zmq.NOBLOCK)
@@ -49,7 +50,7 @@ class ZMQBridge(QThread):
                         self.chat_received.emit(message.get('value', ''))
                 except zmq.Again:
                     pass
-                    
+
             if fetcher_sub in socks:
                 try:
                     message = fetcher_sub.recv_json(flags=zmq.NOBLOCK)
@@ -83,7 +84,7 @@ class ZMQBridge(QThread):
                         self.mic_volume_updated.emit(message.get('value', 0.0))
                 except zmq.Again:
                     pass
-                    
+
         router_sub.close()
         fetcher_sub.close()
         progress_sub.close()
