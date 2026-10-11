@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, QWidget, 
                                 QHBoxLayout, QTextEdit, QTextBrowser, QLineEdit, QPushButton, QLabel,
                                 QDialog, QFormLayout, QComboBox, QDialogButtonBox, QCheckBox,
                                 QTabWidget, QSlider, QProgressBar, QStackedWidget, QButtonGroup,
-                                QSizePolicy)
+                                QSizePolicy, QMenu, QInputDialog, QMessageBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPalette, QColor
 from PySide6.QtSql import QSqlDatabase
@@ -48,7 +48,14 @@ def apply_dark_theme(app):
 
     qss = """
     QWidget { font-size: 13px; }
-    QLabel#brand { font-size: 16px; font-weight: bold; color: #f38ba8; }
+    QLabel#logoTile {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f38ba8, stop:0.55 #cba6f7, stop:1 #89b4fa);
+        color: #11111b; border-radius: 8px; font-size: 15px; font-weight: 900;
+    }
+    QLabel#brandWord { font-size: 17px; font-weight: 800; color: #cdd6f4; }
+    QLabel#statusChip { background: #313244; border: 1px solid #45475a; border-radius: 15px; }
+    QPushButton#settingsButton { border: none; background: transparent; font-size: 17px; }
+    QPushButton#settingsButton:hover { background: #313244; border-radius: 8px; }
     QLabel#sectionHeader { font-size: 15px; font-weight: bold; }
     QLabel#nowTitle { font-size: 18px; font-weight: bold; }
     QLabel#summaryLabel, QLabel#statusLabel { color: #a6adc8; font-size: 11px; }
@@ -240,27 +247,53 @@ class AgenticPlayerWindow(QMainWindow):
         top.setFixedHeight(56)
         tl = QHBoxLayout(top)
         tl.setContentsMargins(16, 8, 16, 8)
-        brand = QLabel("▶ AgenticPlayer")
-        brand.setObjectName("brand")
-        tl.addWidget(brand)
+        tl.setSpacing(12)
+
+        # Logo: gradient play tile + two-tone wordmark
+        logo_tile = QLabel("▶")
+        logo_tile.setObjectName("logoTile")
+        logo_tile.setFixedSize(30, 30)
+        logo_tile.setAlignment(Qt.AlignCenter)
+        wordmark = QLabel('Agentic<span style="color:#f38ba8;">Player</span>')
+        wordmark.setObjectName("brandWord")
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(9)
+        brand_row.addWidget(logo_tile)
+        brand_row.addWidget(wordmark)
+        tl.addLayout(brand_row)
+
         tl.addStretch()
+
         self.search_box = QLineEdit()
         self.search_box.setObjectName("globalSearch")
         self.search_box.setPlaceholderText("🔍 Search your library…")
-        self.search_box.setFixedWidth(420)
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.setMinimumWidth(280)
+        self.search_box.setMaximumWidth(480)
         self.search_box.textChanged.connect(self.on_search_changed)
-        tl.addWidget(self.search_box, Qt.AlignCenter)
+        tl.addWidget(self.search_box)
+
         tl.addStretch()
-        self.mic_status_label = QLabel("🎤 Auto")
-        self.mic_status_label.setObjectName("statusLabel")
-        self.spk_status_label = QLabel("🔊 Auto")
-        self.spk_status_label.setObjectName("statusLabel")
-        tl.addWidget(self.mic_status_label)
-        tl.addSpacing(8)
-        tl.addWidget(self.spk_status_label)
-        tl.addSpacing(8)
+
+        # Compact device chips - full names live in tooltips, so the bar
+        # never gets crowded (this was the overlap culprit)
+        self.mic_status_label = QLabel("🎤")
+        self.mic_status_label.setObjectName("statusChip")
+        self.mic_status_label.setFixedSize(30, 30)
+        self.mic_status_label.setAlignment(Qt.AlignCenter)
+        self.mic_status_label.setToolTip("Microphone: Auto-Detect (System Default)")
+        self.spk_status_label = QLabel("🔊")
+        self.spk_status_label.setObjectName("statusChip")
+        self.spk_status_label.setFixedSize(30, 30)
+        self.spk_status_label.setAlignment(Qt.AlignCenter)
+        self.spk_status_label.setToolTip("Speaker: Auto-Detect (System Default)")
         self.settings_button = QPushButton("⚙️")
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setFixedSize(34, 34)
+        self.settings_button.setToolTip("Settings")
         self.settings_button.clicked.connect(self.open_settings)
+        tl.addWidget(self.mic_status_label)
+        tl.addWidget(self.spk_status_label)
         tl.addWidget(self.settings_button)
         root.addWidget(top)
 
@@ -477,10 +510,10 @@ class AgenticPlayerWindow(QMainWindow):
 
         mic_name = s.get("mic_name") or "Auto-Detect (System Default)"
         mic_name = mic_name.split("] ")[-1] if "] " in mic_name else mic_name
-        self.mic_status_label.setText(f"🎤 {mic_name[:20]}")
+        self.mic_status_label.setToolTip(f"Microphone: {mic_name}")
         spk_name = s.get("spk_name") or "Auto-Detect (System Default)"
         spk_name = spk_name.split("] ")[-1] if "] " in spk_name else spk_name
-        self.spk_status_label.setText(f"🔊 {spk_name[:20]}")
+        self.spk_status_label.setToolTip(f"Speaker: {spk_name}")
 
     # ---------------- playback plumbing ----------------
 
@@ -683,8 +716,8 @@ class AgenticPlayerWindow(QMainWindow):
             save_settings(config)
             mic_disp = config["mic_name"].split("] ")[-1] if "] " in config["mic_name"] else config["mic_name"]
             spk_disp = config["spk_name"].split("] ")[-1] if "] " in config["spk_name"] else config["spk_name"]
-            self.mic_status_label.setText(f"🎤 {mic_disp[:20]}")
-            self.spk_status_label.setText(f"🔊 {spk_disp[:20]}")
+            self.mic_status_label.setToolTip(f"Microphone: {mic_disp}")
+            self.spk_status_label.setToolTip(f"Speaker: {spk_disp}")
             self.config_pub_socket.send_json({"type": "hardware_update", "config": config})
             self.config_pub_socket.send_json({"type": "llm_update", "config": config})
 
