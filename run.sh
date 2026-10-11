@@ -17,7 +17,12 @@ fi
 
 echo "[*] Cleaning up existing ports..."
 # Kill any lingering worker processes on your app's ports
-fuser -k 5555/tcp 5556/tcp 5557/tcp 5559/tcp 5560/tcp 5561/tcp 5562/tcp 2>/dev/null
+# (5563 player-progress and 5564 voice-meter were missing before)
+fuser -k 5555/tcp 5556/tcp 5557/tcp 5559/tcp 5560/tcp 5561/tcp 5562/tcp 5563/tcp 5564/tcp 2>/dev/null
+
+# The TTS worker binds no port (it only connects), so fuser cannot see it.
+# A stale TTS process would double-speak - kill it by command line instead.
+pkill -f "python.*agentic_player/workers/tts_worker\.py" 2>/dev/null
 
 # Cleanup child processes when the UI closes
 trap "kill 0" EXIT

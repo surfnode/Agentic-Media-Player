@@ -1,48 +1,50 @@
-<img width="1919" height="1117" alt="image" src="https://github.com/user-attachments/assets/4a4c6b4e-5f4e-4c05-9b00-172948dfd559" />
-
 # Agentic Media Player
 
-A local-AI-first media player and library manager built with Python, PySide6, and ZeroMQ. It integrates voice commands, conversational AI, and automated media fetching into a single unified desktop interface.
+Local-first media player with a voice-driven AI agent. Qt UI, VLC playback,
+yt-dlp downloads, Ollama LLM routing, local STT/TTS (Qwen3-ASR + Kokoro).
+Everything runs on this machine - no cloud calls except optional web search.
 
-## Features
-* **Local AI Agent**: Hot-swappable LLM integration (defaulting to Granite/Ollama via LiteLLM) to parse commands and answer queries.
-* **Voice Control**: Push-to-Talk functionality using Whisper/Faster-Whisper for local Speech-to-Text with a live UI audio visualizer.
-* **Agent Voice**: Text-to-Speech responses powered by Kokoro-82M (Fast) and Suno Bark (Heavy).
-* **Automated Fetching**: Built-in `yt-dlp` worker for downloading, metadata tagging, and auto-categorizing audio and video files.
-* **Native Playback**: VLC engine embedded directly into the PySide6 X11 window with a custom transport dock and progress scrubber.
-* **Multi-Process Architecture**: ZeroMQ handles IPC between the UI, player, fetcher, and AI workers to guarantee a freeze-free GUI.
+## Run / stop
+
+    ./run.sh     # starts all workers + UI; close the window or Ctrl+C to stop all
+    ./stop.sh    # kills any leftover processes (safe to run any time)
 
 ## Prerequisites
-* Python 3.10+
-* `libvlc` (VLC Media Player installed on the system)
-* Ollama (running locally for LLM inference)
 
-## ZMQ Socket Architecture
-The application runs on a distributed background worker model over `localhost` TCP sockets:
-* `5555`: Agent Router (LLM parsing)
-* `5556`: Fetcher Worker (Downloads & DB Sync)
-* `5557`: UI Chat Publisher
-* `5559`: VLC Player Worker
-* `5560`: Voice Worker (STT & Mic Capture)
-* `5561`: Live UI Config/Hardware Updates
-* `5562`: Fetcher Completion Status
-* `5563`: Playback Progress & Scrubber Sync
-* `5564`: Live Mic Volume Broadcast
+- Python venv at `./venv` (packages in `requirements.txt`)
+- Ollama running with a model pulled (default: `granite4.2:8b-q8_0`)
+- `ffmpeg` on PATH (yt-dlp audio extraction)
+- VLC installed (python-vlc wraps libvlc)
 
-## Hardware Requirements
-Given the heavy reliance on concurrent local AI inference (LLM routing, Whisper Speech-to-Text, and Bark/Kokoro Text-to-Speech), a capable workstation is highly recommended.
+## Message flows
 
-**Minimum System Requirements:**
-* **OS:** Linux (Ubuntu/Debian based)
-* **CPU:** Quad-core processor
-* **RAM:** 16GB System Memory
-* **GPU:** Dedicated GPU with at least 8GB VRAM (NVIDIA preferred for CUDA support)
-* **Storage:** 50GB SSD
+- You (typed or spoken) -> Router (5555) -> spoken reply (5557) -> UI chat + TTS voice
+- Router -> Fetcher (5556) -> download -> DB -> "done" (5562) -> UI library refresh
+- Router / UI -> Player (5559) -> progress + track changes (5563) -> UI transport bar
+- UI -> Voice (5560) PTT control; Voice -> mic level (5564) -> UI meter
+- UI -> 5561 config PUB -> all workers (live hot-swap of model/voice/devices)
 
-**Recommended System Requirements (for seamless AI multitasking):**
-* **OS:** Linux (Kubuntu/Ubuntu 26.04+)
-* **CPU:** Modern multi-core processor (AMD Ryzen 9 or equivalent)
-* **RAM:** 32GB+ DDR5 Memory
-* **GPU:** NVIDIA GeForce RTX series with 16GB VRAM (e.g., RTX 5060 Ti)
-* **Storage:** 1TB NVMe SSD for fast media and model loading
-* **Audio:** Dedicated microphone and speakers for push-to-talk capability
+## Port map
+
+| Port | Bound by | Type | Purpose |
+|------|----------|------|---------|
+| 5555 | Router | PULL | Chat/commands in (UI + voice worker) |
+| 5556 | Fetcher | PULL | Download commands |
+| 5557 | Router | PUB | chat_reply -> UI chat + TTS |
+| 5559 | Player | PULL | Transport commands (play/seek/volume) |
+| 5560 | Voice | PULL | PTT / always-on control from UI |
+| 5561 | UI | PUB | Config bus (all workers subscribe) |
+| 5562 | Fetcher | PUB | download_complete -> UI |
+| 5563 | Player | PUB | progress / track_changed -> UI |
+| 5564 | Voice | PUB | mic volume -> UI meter |
+
+## Data on disk (all auto-created, all gitignored)
+
+- `agentic_player.db` - track library
+- `downloads/audio/`, `downloads/video/` - media + thumbnails
+- `settings.json` - persisted settings; single source of truth is
+  `DEFAULTS` in `src/agentic_player/core/settings.py`
+
+## CLI shortcut
+
+    python trigger_download.py "Artist - Title"   # defaults to video
