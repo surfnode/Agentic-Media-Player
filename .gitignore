@@ -15,3 +15,6 @@ settings.json
 
 # Runtime logs
 logs/
+
+# External clone - not part of our source
+bgutil-ytdlp-pot-provider/
