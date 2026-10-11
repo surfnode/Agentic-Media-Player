@@ -21,6 +21,25 @@ from agentic_player.core.zmq_bridge import ZMQBridge
 from agentic_player.ui.pages import (HomePage, LibraryPage, GenresPage, PlaylistsPage,
                                      NowPlayingPage, TrackCard)
 
+LLM_PROVIDERS = [
+    ("Local (Ollama)", "ollama"),
+    ("OpenAI", "openai"),
+    ("Anthropic (Claude)", "anthropic"),
+    ("Custom - OpenAI-compatible (ALEPH Cloud, OpenRouter, Groq...)", "custom"),
+]
+LLM_SUGGESTED_MODELS = {
+    "ollama": ["granite4.2:8b-q8_0", "llama3.1", "mistral", "qwen2.5"],
+    "openai": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini"],
+    "anthropic": ["claude-sonnet-4", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
+    "custom": [],
+}
+LLM_HINTS = {
+    "ollama": "Local model - no account, no key, nothing leaves this machine.",
+    "openai": "Key from platform.openai.com. Stored only in settings.json on this machine.",
+    "anthropic": "Key from console.anthropic.com. Stored only in settings.json on this machine.",
+    "custom": "Any OpenAI-compatible endpoint: paste its base URL, your key, and the model name it serves (ALEPH Cloud, OpenRouter, Groq, LM Studio...).",
+}
+
 def init_qt_db(db_path="agentic_player.db"):
     db = QSqlDatabase.addDatabase("QSQLITE")
     db.setDatabaseName(db_path)
@@ -109,11 +128,13 @@ class SettingsDialog(QDialog):
     def __init__(self, current=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Application Settings")
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(450)
+        self.setMinimumWidth(540)
+        self.setMinimumHeight(500)
+        self._settings_current = current or {}
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
 
+        # ---------- Hardware ----------
         hw_tab = QWidget()
         hw_layout = QFormLayout(hw_tab)
         self.mic_combo = QComboBox()
@@ -129,16 +150,37 @@ class SettingsDialog(QDialog):
         hw_layout.addRow("Microphone Input:", self.mic_combo)
         hw_layout.addRow("Speaker Output:", self.spk_combo)
 
+        # ---------- AI Models ----------
         ai_tab = QWidget()
         ai_layout = QFormLayout(ai_tab)
+
+        self.llm_provider_combo = QComboBox()
+        for label, data in LLM_PROVIDERS:
+            self.llm_provider_combo.addItem(label, data)
+        self.llm_provider_combo.currentIndexChanged.connect(self._on_llm_provider_changed)
+        ai_layout.addRow("LLM Provider:", self.llm_provider_combo)
+
         self.llm_model_combo = QComboBox()
         self.llm_model_combo.setEditable(True)
-        self.llm_model_combo.addItems([
-            "ollama/granite4.2:8b-q8_0", "ollama/llama3.1", "ollama/mistral", "ollama/qwen2.5"
-        ])
-        self.llm_api_input = QLineEdit("http://localhost:11434")
+        ai_layout.addRow("Model:", self.llm_model_combo)
+
+        self.llm_url_input = QLineEdit()
+        ai_layout.addRow("API URL:", self.llm_url_input)
+
+        self.llm_key_input = QLineEdit()
+        self.llm_key_input.setEchoMode(QLineEdit.Password)
+        ai_layout.addRow("API Key:", self.llm_key_input)
+
+        self.llm_hint = QLabel("")
+        self.llm_hint.setObjectName("statusLabel")
+        self.llm_hint.setWordWrap(True)
+        ai_layout.addRow("", self.llm_hint)
+
         self.search_shows_check = QCheckBox("Enable Web Search & Links (Music Shows)")
         self.search_shows_check.setChecked(True)
+        ai_layout.addRow("", self.search_shows_check)
+
+        ai_layout.addRow(QLabel("--- Text-to-Speech ---"))
         self.kokoro_voice_combo = QComboBox()
         self.kokoro_voice_combo.addItems([
             "af_bella (American Female)", "af_sarah (American Female)",
@@ -151,13 +193,10 @@ class SettingsDialog(QDialog):
         self.kokoro_speed.setValue(100)
         self.kokoro_speed.setTickPosition(QSlider.TicksBelow)
         self.kokoro_speed.setTickInterval(10)
-        ai_layout.addRow("LLM Model:", self.llm_model_combo)
-        ai_layout.addRow("Ollama API URL:", self.llm_api_input)
-        ai_layout.addRow("", self.search_shows_check)
-        ai_layout.addRow(QLabel("--- Text-to-Speech ---"))
         ai_layout.addRow("Kokoro Voice:", self.kokoro_voice_combo)
         ai_layout.addRow("Kokoro Speed (50%-150%):", self.kokoro_speed)
 
+        # ---------- Appearance ----------
         ui_tab = QWidget()
         ui_layout = QFormLayout(ui_tab)
         self.theme_combo = QComboBox()
@@ -168,13 +207,18 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(ai_tab, "🧠 AI Models & TTS")
         self.tabs.addTab(ui_tab, "🎨 Appearance")
 
-        current = current or {}
+        # ---------- Prefill ----------
+        current = self._settings_current
         for combo, key in [(self.mic_combo, "mic_name"), (self.spk_combo, "spk_name")]:
             idx = combo.findText(current.get(key) or "")
             if idx >= 0:
                 combo.setCurrentIndex(idx)
-        self.llm_model_combo.setCurrentText(current.get("llm_model") or "ollama/granite4.2:8b-q8_0")
-        self.llm_api_input.setText(current.get("llm_api") or "http://localhost:11434")
+
+        p = current.get("llm_provider") or "ollama"
+        pidx = self.llm_provider_combo.findData(p)
+        self.llm_provider_combo.setCurrentIndex(pidx if pidx >= 0 else 0)
+        self._on_llm_provider_changed()  # populates model/url/key/hint for this provider
+
         self.search_shows_check.setChecked(current.get("web_search_enabled", True))
         voice_id = current.get("kokoro_voice") or "af_bella"
         vidx = self.kokoro_voice_combo.findText(voice_id, Qt.MatchStartsWith)
@@ -188,18 +232,71 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
+    def _on_llm_provider_changed(self, *args):
+        """Re-model the Model/URL/Key fields for the newly selected provider.
+        Each provider remembers its own values (per-provider settings keys)."""
+        p = self.llm_provider_combo.currentData() or "ollama"
+        s = self._settings_current
+
+        # Model
+        self.llm_model_combo.clear()
+        for m in LLM_SUGGESTED_MODELS.get(p, []):
+            self.llm_model_combo.addItem(m)
+        stored_model = (s.get(f"llm_model_{p}") or "").strip()
+        if stored_model:
+            self.llm_model_combo.setCurrentText(stored_model)
+        elif p == "custom":
+            self.llm_model_combo.setCurrentText("")
+            self.llm_model_combo.setPlaceholderText("model name your provider serves")
+        else:
+            self.llm_model_combo.setCurrentText(self.llm_model_combo.itemText(0) if self.llm_model_combo.count() else "")
+
+        # URL
+        if p == "ollama":
+            self.llm_url_input.setEnabled(True)
+            self.llm_url_input.setText((s.get("llm_api_ollama") or "http://localhost:11434").strip())
+            self.llm_url_input.setPlaceholderText("http://localhost:11434")
+        elif p == "custom":
+            self.llm_url_input.setEnabled(True)
+            self.llm_url_input.setText((s.get("llm_api_base_custom") or "").strip())
+            self.llm_url_input.setPlaceholderText("https://your-endpoint/v1")
+        else:
+            self.llm_url_input.setEnabled(False)
+            self.llm_url_input.setText("")
+            self.llm_url_input.setPlaceholderText("not needed - official endpoint")
+
+        # Key
+        if p == "ollama":
+            self.llm_key_input.setEnabled(False)
+            self.llm_key_input.setText("")
+            self.llm_key_input.setPlaceholderText("not needed - local")
+        else:
+            self.llm_key_input.setEnabled(True)
+            self.llm_key_input.setText((s.get(f"llm_api_key_{p}") or "").strip())
+            self.llm_key_input.setPlaceholderText("sk-..." if p != "custom" else "your provider's API key")
+
+        self.llm_hint.setText(LLM_HINTS.get(p, ""))
+
     def get_all_settings(self):
-        return {
+        p = self.llm_provider_combo.currentData() or "ollama"
+        out = {
             "mic_device_id": self.mic_combo.currentData(),
             "mic_name": self.mic_combo.currentText(),
             "spk_device_id": self.spk_combo.currentData(),
             "spk_name": self.spk_combo.currentText(),
-            "llm_model": self.llm_model_combo.currentText(),
-            "llm_api": self.llm_api_input.text(),
+            "llm_provider": p,
+            f"llm_model_{p}": self.llm_model_combo.currentText().strip(),
             "web_search_enabled": self.search_shows_check.isChecked(),
             "kokoro_voice": self.kokoro_voice_combo.currentText().split(" ")[0],
-            "kokoro_speed": self.kokoro_speed.value() / 100.0
+            "kokoro_speed": self.kokoro_speed.value() / 100.0,
         }
+        if p == "ollama":
+            out["llm_api_ollama"] = self.llm_url_input.text().strip() or "http://localhost:11434"
+        if p == "custom":
+            out["llm_api_base_custom"] = self.llm_url_input.text().strip()
+        if p in ("openai", "anthropic", "custom"):
+            out[f"llm_api_key_{p}"] = self.llm_key_input.text().strip()
+        return out
 
 class AgenticPlayerWindow(QMainWindow):
     def __init__(self):
@@ -249,7 +346,6 @@ class AgenticPlayerWindow(QMainWindow):
         tl.setContentsMargins(16, 8, 16, 8)
         tl.setSpacing(12)
 
-        # Logo: gradient play tile + two-tone wordmark
         logo_tile = QLabel("▶")
         logo_tile.setObjectName("logoTile")
         logo_tile.setFixedSize(30, 30)
@@ -275,7 +371,6 @@ class AgenticPlayerWindow(QMainWindow):
 
         tl.addStretch()
 
-        # Compact device chips - full names in tooltips, bar stays uncrowded
         self.mic_status_label = QLabel("🎤")
         self.mic_status_label.setObjectName("statusChip")
         self.mic_status_label.setFixedSize(30, 30)
@@ -535,7 +630,6 @@ class AgenticPlayerWindow(QMainWindow):
         })
 
     def on_up_next_clicked(self, item):
-        """Click a track in Up Next: jump to it within the current context."""
         files = getattr(self, "_play_context", [])
         match = next((f for f in files if os.path.basename(f) == item.text()), None)
         if match and os.path.exists(match):

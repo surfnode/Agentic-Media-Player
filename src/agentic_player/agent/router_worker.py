@@ -16,21 +16,78 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from agentic_player.agent.schemas import AgentResponse, Command
 from agentic_player.core.settings import load_settings
 
-client = instructor.from_litellm(completion, mode=instructor.Mode.JSON)
+# Two instructor clients: JSON mode (native response_format - OpenAI,
+# Ollama, most OpenAI-compatible servers) and TOOLS mode (function calling -
+# the portable path for Anthropic, which has no response_format).
+client_json = instructor.from_litellm(completion, mode=instructor.Mode.JSON)
+client_tools = instructor.from_litellm(completion, mode=instructor.Mode.TOOLS)
+
+PROVIDER_NAMES = {"ollama": "Ollama (local)", "openai": "OpenAI",
+                  "anthropic": "Anthropic (Claude)", "custom": "Custom endpoint"}
+
+
+def build_llm_call(s):
+    """Turn the settings dict into litellm create() kwargs for the active provider."""
+    provider = s.get("llm_provider", "ollama")
+    if provider == "ollama":
+        return {
+            "model": f"ollama/{(s.get('llm_model_ollama') or 'granite4.2:8b-q8_0').strip()}",
+            "api_base": (s.get("llm_api_ollama") or "http://localhost:11434").strip(),
+        }
+    if provider == "openai":
+        return {
+            "model": f"openai/{(s.get('llm_model_openai') or 'gpt-4o-mini').strip()}",
+            "api_key": (s.get("llm_api_key_openai") or "").strip(),
+        }
+    if provider == "anthropic":
+        return {
+            "model": f"anthropic/{(s.get('llm_model_anthropic') or 'claude-sonnet-4').strip()}",
+            "api_key": (s.get("llm_api_key_anthropic") or "").strip(),
+        }
+    # custom: any OpenAI-compatible endpoint (ALEPH Cloud, OpenRouter, Groq, LM Studio...)
+    model = (s.get("llm_model_custom") or "").strip()
+    if "/" not in model:
+        model = f"openai/{model}"
+    out = {"model": model}
+    base = (s.get("llm_api_base_custom") or "").strip()
+    if base:
+        out["api_base"] = base.rstrip("/")
+    key = (s.get("llm_api_key_custom") or "").strip()
+    if key:
+        out["api_key"] = key
+    return out
+
+
+def preflight_error(s):
+    """Friendly, spoken errors for missing credentials - caught BEFORE
+    burning a network request."""
+    provider = s.get("llm_provider", "ollama")
+    if provider in ("openai", "anthropic") and not (s.get(f"llm_api_key_{provider}") or "").strip():
+        return (f"You've selected {PROVIDER_NAMES.get(provider)} but no API key is saved. "
+                "Open Settings, the AI Models tab, and paste your key.")
+    if provider == "custom":
+        if not (s.get("llm_api_base_custom") or "").strip():
+            return ("The custom endpoint has no base URL set. Open Settings, the AI Models tab, "
+                    "and paste your provider's URL, for example https://your-provider/v1.")
+        if not (s.get("llm_model_custom") or "").strip():
+            return ("The custom endpoint has no model name set. Open Settings and enter the "
+                    "model name your provider serves.")
+    return None
+
 
 def start_router():
     context = zmq.Context()
-    
+
     in_socket = context.socket(zmq.PULL)
     in_socket.bind("tcp://127.0.0.1:5555")
-    
+
     config_socket = context.socket(zmq.SUB)
     config_socket.connect("tcp://127.0.0.1:5561")
     config_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-    
+
     fetch_socket = context.socket(zmq.PUSH)
     fetch_socket.connect("tcp://127.0.0.1:5556")
-    
+
     play_socket = context.socket(zmq.PUSH)
     play_socket.connect("tcp://127.0.0.1:5559")
 
@@ -43,12 +100,10 @@ def start_router():
 
     print("[*] Agent Router started. Listening on Port 5555...")
 
-    # Boot config from settings.json (live updates still arrive on 5561)
-    s = load_settings()
-    llm_model = s.get("llm_model", "ollama/granite4.2:8b-q8_0")
-    api_base = s.get("llm_api", "http://localhost:11434")
-    web_search_enabled = s.get("web_search_enabled", True)
-    print(f"[*] Router config: model={llm_model} | api={api_base} | web_search={web_search_enabled}")
+    llm_cfg = load_settings()
+    call = build_llm_call(llm_cfg)
+    print(f"[*] Router LLM: {PROVIDER_NAMES.get(llm_cfg.get('llm_provider'), '?')} | {call.get('model')}"
+          f" | web_search={llm_cfg.get('web_search_enabled', True)}")
 
     system_prompt = (
         "You are the conversational intelligence layer of a local media player.\n"
@@ -74,18 +129,19 @@ def start_router():
 
     while True:
         socks = dict(poller.poll(100))
-        
+
         if config_socket in socks:
             msg = config_socket.recv_json()
             if msg.get("type") == "llm_update":
-                new_model = msg["config"].get("llm_model", llm_model)
-                new_api = msg["config"].get("llm_api", api_base)
-                web_search_enabled = msg["config"].get("web_search_enabled", True)
-                
-                if new_model != llm_model or new_api != api_base:
-                    llm_model = new_model
-                    api_base = new_api
-                    print(f"\n[*] Hot-Swapped LLM -> Model: {llm_model}")
+                cfg = msg.get("config", {})
+                changed = {k: v for k, v in cfg.items()
+                           if k in llm_cfg and llm_cfg[k] != v}
+                if changed:
+                    llm_cfg.update(changed)
+                    if any(k.startswith("llm_") for k in changed):
+                        new_call = build_llm_call(llm_cfg)
+                        print(f"[*] Hot-Swapped LLM -> "
+                              f"{PROVIDER_NAMES.get(llm_cfg.get('llm_provider'), '?')} | {new_call.get('model')}")
 
         if in_socket in socks:
             message = in_socket.recv_json()
@@ -93,36 +149,43 @@ def start_router():
             print(f"\n[User Says]: {user_text}")
 
             conversation_history.append({"role": "user", "content": user_text})
-            
+
             if len(conversation_history) > 13:
                 conversation_history = [conversation_history[0]] + conversation_history[-12:]
 
-            try:
-                response = client.chat.completions.create(
-                    model=llm_model, 
-                    response_model=AgentResponse,
-                    messages=conversation_history,
-                    api_base=api_base
-                )
-            except Exception as e:
-                err_str = str(e)
-                print(f"[!] LLM failed: {err_str}")
-                cmds = []
-                
-                if "not found" in err_str.lower():
-                    model_clean = llm_model.replace("ollama/", "")
-                    spoken = f"I cannot connect to {model_clean}. Please open your terminal and run: ollama pull {model_clean}"
-                else:
-                    spoken = "I encountered an error connecting to the AI model. Please check the logs."
-                    
-                response = AgentResponse(spoken_reply=spoken, commands=cmds)
+            # Pre-flight: missing key / URL -> spoken guidance, no request burned
+            friendly = preflight_error(llm_cfg)
+            if friendly:
+                print(f"[!] Config incomplete: {friendly}")
+                response = AgentResponse(spoken_reply=friendly, commands=[])
+            else:
+                call = build_llm_call(llm_cfg)
+                client = client_tools if llm_cfg.get("llm_provider") == "anthropic" else client_json
+                try:
+                    response = client.chat.completions.create(
+                        model=call["model"],
+                        response_model=AgentResponse,
+                        messages=conversation_history,
+                        **{k: v for k, v in call.items() if k != "model" and v},
+                    )
+                except Exception as e:
+                    err_str = str(e)
+                    print(f"[!] LLM failed: {err_str}")
+                    if "not found" in err_str.lower():
+                        model_clean = call["model"].split("/", 1)[-1]
+                        spoken = f"I cannot connect to {model_clean}. Please open your terminal and run: ollama pull {model_clean}"
+                    elif "api key" in err_str.lower() or "auth" in err_str.lower() or "401" in err_str:
+                        spoken = "The provider rejected the API key. Check it in Settings, AI Models tab."
+                    else:
+                        spoken = "I encountered an error connecting to the AI model. Please check the logs."
+                    response = AgentResponse(spoken_reply=spoken, commands=[])
 
             conversation_history.append({"role": "assistant", "content": response.spoken_reply})
             ui_pub_socket.send_json({"type": "chat_reply", "value": response.spoken_reply})
 
             for cmd in response.commands:
                 if cmd.action == "search_shows" and cmd.query:
-                    if not web_search_enabled:
+                    if not llm_cfg.get("web_search_enabled", True):
                         ui_pub_socket.send_json({"type": "chat_reply", "value": "<i>Web search disabled in settings.</i>"})
                     elif not has_ddgs:
                         ui_pub_socket.send_json({"type": "chat_reply", "value": "<i>The ddgs package is missing.</i>"})
@@ -140,13 +203,13 @@ def start_router():
                                 ui_pub_socket.send_json({"type": "chat_reply", "value": f"No recent concert listings for {cmd.query}."})
                         except Exception as e:
                             ui_pub_socket.send_json({"type": "chat_reply", "value": f"Search failed: {e}"})
-                            
+
                 elif cmd.action == "download" and cmd.query:
                     media_type = getattr(cmd, "media_type", None)
                     if media_type in ["audio", "video"]:
                         print(f"[Agent -> Fetcher]: Downloading '{cmd.query}' as {media_type.upper()}")
                         fetch_socket.send_json({"action": "download", "query": cmd.query, "media_type": media_type})
-                        
+
                 elif cmd.action == "play":
                     if cmd.query:
                         db_path = "agentic_player.db"
@@ -161,7 +224,7 @@ def start_router():
                                         found_file = row[0]
                             except Exception as e:
                                 pass
-                        
+
                         if found_file:
                             print(f"[Agent -> Player]: Found matching file: {os.path.basename(found_file)}")
                             play_socket.send_json({"action": "play", "file_path": found_file})
