@@ -48,3 +48,23 @@ Everything runs on this machine - no cloud calls except optional web search.
 ## CLI shortcut
 
     python trigger_download.py "Artist - Title"   # defaults to video
+
+## Downloads blocked by YouTube? ("Sign in to confirm you're not a bot")
+
+YouTube bot-checks unauthenticated downloaders. Two fixes, configured in
+`settings.json` (fetcher reads them at BOOT - restart the app after editing):
+
+1. **Browser cookies** - log into youtube.com in your browser, then set:
+       "yt_cookies_from_browser": "firefox"
+   (also works: chrome, chromium, brave, edge)
+
+2. **cookies.txt** - install a browser extension like "Get cookies.txt
+   LOCALLY", export youtube.com cookies, save as `cookies.txt` in the project
+   root, then set:
+       "yt_cookies_file": "cookies.txt"
+
+Also keep yt-dlp current - YouTube changes break old versions:
+       ~/agentic-music-player/venv/bin/pip install -U yt-dlp
+
+Failed downloads now appear in the chat panel; full details in
+`logs/fetcher.log`.

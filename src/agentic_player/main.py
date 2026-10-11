@@ -324,6 +324,7 @@ class AgenticPlayerWindow(QMainWindow):
         self._load_persisted_settings()
 
         self.zmq_bridge.download_complete.connect(self.on_library_changed)
+        self.zmq_bridge.download_failed.connect(self.on_download_failed)
         self.zmq_bridge.chat_received.connect(self.display_ai_message)
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
@@ -663,6 +664,10 @@ class AgenticPlayerWindow(QMainWindow):
         if is_video:
             self.pages.setCurrentWidget(self.now_playing_page)
         self.now_playing_page.set_track(title, artist, thumb, is_video, file_path)
+
+    def on_download_failed(self, text):
+        """A download attempt failed - show it in chat instead of hiding in logs."""
+        self.chat_history.append(f"<b style='color:#f38ba8;'>⚠ Download failed:</b> {text}<br>")
 
     def on_library_changed(self):
         self.home_page.refresh()

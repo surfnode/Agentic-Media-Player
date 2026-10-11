@@ -7,6 +7,7 @@ class ZMQBridge(QThread):
     mic_volume_updated = Signal(float)
     state_changed = Signal(dict)
     download_complete = Signal()
+    download_failed = Signal(str)
     chat_received = Signal(str)
     track_changed = Signal(str)
 
@@ -57,6 +58,9 @@ class ZMQBridge(QThread):
                     msg_type = message.get('type')
                     if msg_type == 'download_complete':
                         self.download_complete.emit()
+                    elif msg_type == 'download_failed':
+                        reason = message.get('reason') or message.get('query') or 'unknown error'
+                        self.download_failed.emit(f"{message.get('query', '?')}: {reason}")
                 except zmq.Again:
                     pass
 

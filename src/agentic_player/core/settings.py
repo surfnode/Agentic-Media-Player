@@ -35,6 +35,16 @@ DEFAULTS = {
     "llm_api_key_custom": "",
     # Web search
     "web_search_enabled": True,
+    # Downloads: YouTube cookies (bot-check workaround). Pick ONE:
+    #   yt_cookies_from_browser: "firefox" / "chrome" / "chromium" / "brave"...
+    #     (you must be logged into youtube.com in that browser)
+    #   yt_cookies_file: path to an exported cookies.txt ("cookies.txt" works
+    #     if the file sits in the project root)
+    # Both empty = no cookies (YouTube may block downloads with "Sign in to
+    # confirm you're not a bot"). Fetcher reads these at BOOT - restart after
+    # changing them.
+    "yt_cookies_from_browser": "",
+    "yt_cookies_file": "",
     # TTS (Kokoro)
     "kokoro_voice": "af_bella",
     "kokoro_speed": 1.0,
