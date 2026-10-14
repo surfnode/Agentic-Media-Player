@@ -68,6 +68,7 @@ class TrackCard(QWidget):
 
         sub = QLabel(f"{self.artist or 'Unknown Artist'} · {fmt_duration(self.duration)}")
         sub.setObjectName("cardSub")
+        sub.setWordWrap(True)
         layout.addWidget(sub)
 
     def mouseReleaseEvent(self, e):
@@ -79,7 +80,9 @@ class TrackCard(QWidget):
 
 
 class CardSection(QWidget):
-    """Header + wrapped grid of cards. Clicking a card plays the section."""
+    """Header + centered wrapped grid of cards inside a scroll area.
+    The grid stretches so cards never bleed off the right edge - the
+    scroll area handles overflow vertically."""
     play_requested = Signal(list, str)
 
     def __init__(self, title, subtitle="", parent=None):
@@ -103,7 +106,7 @@ class CardSection(QWidget):
         self.grid = QGridLayout(self.grid_host)
         self.grid.setContentsMargins(0, 4, 0, 0)
         self.grid.setSpacing(8)
-        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         layout.addWidget(self.grid_host)
 
     def add_card(self, card):
@@ -155,6 +158,7 @@ class HomePage(QWidget):
         super().__init__(parent)
         self.db = db
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -190,6 +194,7 @@ class GenresPage(QWidget):
         super().__init__(parent)
         self.db = db
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -228,14 +233,14 @@ class GenresPage(QWidget):
 
 class PlaylistsPage(QWidget):
     play_requested = Signal(list, str)
-    # 3 values: (card, owning section, global pos). The old 2-value signal
-    # crashed the app the moment you right-clicked a playlist card.
+    # 3 values: (card, owning section, global pos).
     menu_requested = Signal(object, object, object)
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -427,8 +432,10 @@ class NowPlayingPage(QWidget):
         left.addWidget(self.stage, 3)
         self.title_label = QLabel("Nothing playing")
         self.title_label.setObjectName("nowTitle")
+        self.title_label.setWordWrap(True)
         self.artist_label = QLabel("")
         self.artist_label.setObjectName("cardSub")
+        self.artist_label.setWordWrap(True)
         left.addWidget(self.title_label)
         left.addWidget(self.artist_label)
         outer.addLayout(left, 3)
@@ -439,6 +446,7 @@ class NowPlayingPage(QWidget):
         right_box.addWidget(up_header)
         self.up_next = QListWidget()
         self.up_next.setObjectName("upNext")
+        self.up_next.setWordWrap(True)
         right_box.addWidget(self.up_next, 1)
         outer.addLayout(right_box, 1)
 

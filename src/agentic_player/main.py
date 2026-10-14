@@ -7,6 +7,7 @@ import sqlite3
 import zmq
 import sounddevice as sd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget, QWidget, QVBoxLayout,
+                                QDialog, QScrollArea, QTextBrowser,
                                 QHBoxLayout, QTextEdit, QTextBrowser, QLineEdit, QPushButton, QLabel,
                                 QDialog, QFormLayout, QComboBox, QDialogButtonBox, QCheckBox,
                                 QTabWidget, QSlider, QProgressBar, QStackedWidget, QButtonGroup,
@@ -99,7 +100,7 @@ def apply_dark_theme(app):
     QPushButton#sendButton { background: #89b4fa; color: #1e1e2e; }
     QPushButton#sendButton:hover { background: #b4befe; }
     QPushButton#muteButton { padding: 4px; font-size: 15px; }
-    QPushButton#muteButton:checked { background: #f38ba8; color: #1e1e2e; }
+    QPushButton#muteButton:checked { background: #f38ba8; color: #1e1e2e; }\n    QPushButton#lyricsButton { padding: 4px; font-size: 15px; }\n    QPushButton#lyricsButton:hover { background: #89b4fa; color: #1e1e2e; }
     QPushButton#playButton { min-width: 52px; font-size: 16px; }
 
     QProgressBar#micMeter { border: 1px solid #45475a; border-radius: 4px; background: #181825; }
@@ -123,6 +124,30 @@ def apply_dark_theme(app):
     QScrollArea { border: none; }
     """
     app.setStyleSheet(qss)
+
+class LyricsDialog(QDialog):
+    """Scrollable lyrics window - click 🎤 in the mini-player to open.
+    Fetches straight from LRCLIB for whatever is playing (no LLM)."""
+    def __init__(self, title, artist, lyrics, parent=None):
+        super().__init__(parent)
+        clean_title = re.sub(r"[(\[].*?(Official|Video|Audio|HD|Live|Lyrics|En Vivo).*?[)\]]", "", title, flags=re.I).strip() or title
+        self.setWindowTitle(f"Lyrics — {clean_title}")
+        self.resize(520, 600)
+        lay = QVBoxLayout(self)
+        head = QLabel(f"<b>{clean_title}</b>" + (f"<br><span style='color:#a6adc8; font-size:11px;'>{artist}</span>" if artist else ""))
+        head.setTextFormat(Qt.RichText)
+        lay.addWidget(head)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        viewer = QTextBrowser()
+        viewer.setOpenExternalLinks(False)
+        if lyrics:
+            viewer.setPlainText(lyrics)
+        else:
+            viewer.setPlainText(f"Couldn't find lyrics for '{clean_title}'" + (f" by {artist}" if artist else "") + ".\n\nLRCLIB has no match - try the agent chat with a more specific song name.")
+        scroll.setWidget(viewer)
+        lay.addWidget(scroll)
+
 
 class SettingsDialog(QDialog):
     def __init__(self, current=None, parent=None):
@@ -490,6 +515,11 @@ class AgenticPlayerWindow(QMainWindow):
         ml.addWidget(self.seek_slider, 2)
         ml.addWidget(self.duration_label)
 
+        self.lyrics_button = QPushButton("🎤")
+        self.lyrics_button.setObjectName("lyricsButton")
+        self.lyrics_button.setFixedSize(44, 30)
+        self.lyrics_button.setToolTip("Lyrics for the current track")
+        self.lyrics_button.clicked.connect(self.show_lyrics_dialog)
         self.mute_button = QPushButton("🔊")
         self.mute_button.setObjectName("muteButton")
         self.mute_button.setCheckable(True)
@@ -500,6 +530,7 @@ class AgenticPlayerWindow(QMainWindow):
         self.volume_slider.setMaximumWidth(120)
         self.volume_slider.valueChanged.connect(self.on_volume_changed)
         self.volume_slider.sliderReleased.connect(self.on_volume_released)
+        ml.addWidget(self.lyrics_button)
         ml.addWidget(self.mute_button)
         ml.addWidget(self.volume_slider)
         root.addWidget(mini)
@@ -744,6 +775,18 @@ class AgenticPlayerWindow(QMainWindow):
 
     def on_volume_released(self):
         save_settings({"volume": self.volume_slider.value()})
+
+    def show_lyrics_dialog(self):
+        """Fetch lyrics for the current track straight from LRCLIB."""
+        title = self.now_title.text()
+        artist = self.now_artist.text()
+        if title in ("Nothing playing", ""):
+            self.chat_history.append("<i>Play something first, then hit 🎤 for lyrics.</i><br>")
+            return
+        from agentic_player.agent.router_worker import fetch_lyrics
+        lyrics = fetch_lyrics(artist if artist != "Unknown Artist" else None, title)
+        dlg = LyricsDialog(title, artist, lyrics, parent=self)
+        dlg.exec()
 
     def on_mute_toggled(self, checked):
         self.mute_button.setText("🔇" if checked else "🔊")
