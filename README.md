@@ -68,3 +68,21 @@ Also keep yt-dlp current - YouTube changes break old versions:
 
 Failed downloads now appear in the chat panel; full details in
 `logs/fetcher.log`.
+
+## Downloader requirements (2026+)
+
+YouTube requires yt-dlp to solve a JavaScript challenge. Two dependencies,
+both already installed on this machine:
+
+1. **yt-dlp with EJS scripts** - always install/upgrade with the extra:
+       venv/bin/pip install -U "yt-dlp[default]"
+   (plain `yt-dlp` is missing the challenge-solver scripts)
+
+2. **Deno JS runtime** - https://deno.com (installed at ~/.deno/bin, and
+   run.sh injects it into PATH automatically). The fetcher prints its
+   status at every boot: look for "[*] JS runtime (deno): ..." in
+   logs/fetcher.log.
+
+If downloads fail again: first run `./diag_ladder.sh`, then check the boot
+line for deno. The most common breakage is a yt-dlp update that outgrew
+the installed yt-dlp-ejs - the fix is the pip command above.

@@ -30,3 +30,7 @@ litellm
 
 # Web search (music shows)
 ddgs
+
+# NOTE: yt-dlp must be installed with the [default] extra (EJS scripts):
+#   pip install -U "yt-dlp[default]"
+# A Deno runtime is also required for YouTube - see README "Downloader requirements".
