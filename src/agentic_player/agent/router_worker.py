@@ -200,7 +200,7 @@ def start_router():
         "roots, no commands.\n"
         "- 'play residente' -> play (query 'Residente') | 'On it.'\n"
         "- 'download 5 residente songs as audio' -> download (query 'Residente', media_type "
-        "'audio', count 5).\n"
+        "'audio', count 5).\n"        "- 'download Volver Volver by Vicente Fernandez' -> download (query 'Vicente Fernandez Volver Volver', media_type 'audio').\n"
         "- 'what are the lyrics to this song?' -> lyrics (no query) | 'Let me pull those up.'\n"
         "- 'lyrics to Bohemian Rhapsody' -> lyrics (query 'Bohemian Rhapsody') | 'Fetching those now.'\n"
         "- 'skip this' -> next | 'Skipping.'\n"

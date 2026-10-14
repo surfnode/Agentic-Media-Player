@@ -31,12 +31,6 @@ stamp() {
 
 mkdir -p logs
 
-# bgutil POT server (YouTube PO tokens) - start once, skip if already up
-if [ -d bgutil-ytdlp-pot-provider/node ] && ! ss -ltn 2>/dev/null | grep -q ':4416'; then
-  echo "[*] Starting bgutil POT server (YouTube PO tokens)..."
-  (cd bgutil-ytdlp-pot-provider/node && npm start) >> logs/pot.log 2>&1 &
-fi
-
 echo "[*] Cleaning up existing ports..."
 # All bound ports + the TTS worker (binds no port, so fuser can't see it)
 fuser -k 5555/tcp 5556/tcp 5557/tcp 5559/tcp 5560/tcp 5561/tcp 5562/tcp 5563/tcp 5564/tcp 2>/dev/null
