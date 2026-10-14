@@ -11,11 +11,11 @@ from agentic_player.core.settings import load_settings
 
 def start_tts_worker():
     context = zmq.Context()
-    
+
     ui_socket = context.socket(zmq.SUB)
     ui_socket.connect("tcp://127.0.0.1:5557")
     ui_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-    
+
     config_socket = context.socket(zmq.SUB)
     config_socket.connect("tcp://127.0.0.1:5561")
     config_socket.setsockopt_string(zmq.SUBSCRIBE, "")
@@ -26,8 +26,7 @@ def start_tts_worker():
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"[*] Loading Kokoro TTS on {device.upper()}...")
-    
-    # Boot config from settings.json (live updates still arrive on 5561)
+
     s = load_settings()
     current_voice = s.get("kokoro_voice", "af_bella")
     current_speed = float(s.get("kokoro_speed", 1.0))
@@ -42,7 +41,7 @@ def start_tts_worker():
 
     while True:
         socks = dict(poller.poll(100))
-        
+
         if config_socket in socks:
             msg = config_socket.recv_json()
             if msg.get("type") in ["llm_update", "hardware_update"]:
@@ -63,9 +62,15 @@ def start_tts_worker():
             elif msg.get("type") == "inference_toggle":
                 tts_enabled = msg["config"].get("tts_enabled", True)
 
-        if ui_socket in socks and tts_enabled:
+        if ui_socket in socks:
             message = ui_socket.recv_json()
             if message.get("type") == "chat_reply":
+                # speak flag: status messages (download confirmations, etc.)
+                # display in chat but are NOT narrated. Default: speak.
+                if not message.get("speak", True):
+                    continue
+                if not tts_enabled:
+                    continue
                 text = message.get("value", "")
                 clean_text = re.sub(r'<[^>]+>', '', text)
                 if clean_text:

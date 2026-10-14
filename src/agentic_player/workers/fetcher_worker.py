@@ -96,9 +96,32 @@ def sync_downloads():
             print(f"[*] Categorized and synced {added_or_updated} local files.")
 
 
+def final_filepath(entry):
+    """The file yt-dlp actually produced (post-processor aware). yt-dlp
+    records it in requested_downloads - the ONLY reliable source, since
+    prepare_filename() needs a live YoutubeDL object we no longer have here."""
+    for rd in entry.get('requested_downloads') or []:
+        fp = rd.get('filepath')
+        if fp and os.path.exists(fp):
+            return fp
+    # merged video case
+    fp = entry.get('filepath')
+    if fp and os.path.exists(fp):
+        return fp
+    return ""
+
+
+def sibling_thumb(media_path):
+    base, _ = os.path.splitext(media_path)
+    for ext in ['.webp', '.jpg', '.jpeg', '.png']:
+        if os.path.exists(base + ext):
+            return base + ext
+    return ""
+
+
 def start_fetcher_worker():
     init_directories()
-    DatabaseManager()  # ensure schema exists before raw SQL below
+    DatabaseManager()
     sync_downloads()
 
     context = zmq.Context()
@@ -109,7 +132,6 @@ def start_fetcher_worker():
 
     print("[*] Fetcher Worker ready. Listening for commands...")
 
-    # ---- Download config (read at BOOT - restart after changing) -------
     s = load_settings()
 
     cookie_opts = {}
@@ -124,10 +146,6 @@ def start_fetcher_worker():
     if not cookie_opts and cookies_browser:
         cookie_opts["cookiesfrombrowser"] = (cookies_browser,)
         cookie_note = f"browser:{cookies_browser}"
-    if not cookie_opts:
-        print("[!] yt-dlp: NO cookies - YouTube bot-check may still block some "
-              "downloads. Strongest fix: yt_cookies_from_browser in settings.json "
-              "(see README). The client ladder will try to cope without them.")
 
     CLIENT_LADDER = [c.strip() for c in (s.get("yt_player_clients") or "").split(",")
                       if c.strip()] or ["tv", "web_safari", "mweb"]
@@ -146,12 +164,10 @@ def start_fetcher_worker():
         ui_pub.send_json({"type": "download_failed", "query": query, "reason": reason})
 
     def run_download(query, media_type, count):
-        """Try each player client in order until YouTube lets us through.
-        Returns (entries, last_error, winning_client)."""
         if query.startswith("http"):
-            search = query                      # real URL: playlist links work as-is
+            search = query
         elif count and count > 1:
-            search = f"ytsearch{count}:{query}"  # top-N search grab
+            search = f"ytsearch{count}:{query}"
         else:
             search = f"ytsearch1:{query}"
 
@@ -214,58 +230,54 @@ def start_fetcher_worker():
 
                 if not entries:
                     reason = (f"{last_err} [clients tried: {', '.join(CLIENT_LADDER)}; "
-                              f"cookies: {cookie_note}] First: update yt-dlp "
-                              f"(venv/bin/pip install -U yt-dlp). If it persists, set "
-                              f"yt_cookies_from_browser in settings.json. Details: logs/fetcher.log")
+                              f"cookies: {cookie_note}] Details: logs/fetcher.log")
                     print(f"[!] Download failed for '{query}': {last_err}")
                     notify_failed(query, reason)
                     continue
 
                 print(f"[*] Client '{winner}' got through - {len(entries)} entries")
-                logged = 0
+
+                logged_titles = []
                 with sqlite3.connect("agentic_player.db") as conn:
                     cursor = conn.cursor()
                     for entry in entries:
+                        file_path = final_filepath(entry)
+                        if not file_path:
+                            print(f"[!] No file on disk for entry: {entry.get('title', '?')}")
+                            continue
+
                         title = entry.get('title', 'Unknown Title')
                         artist = entry.get('uploader', 'Unknown Artist')
                         duration = entry.get('duration')
+                        thumb_path = sibling_thumb(file_path)
 
-                        try:
-                            base_path = os.path.splitext(ydl.prepare_filename(entry))[0]
-                        except Exception:
-                            continue
-
-                        file_path = ""
-                        for ext in ['.mp4', '.m4a', '.mp3', '.webm', '.ogg', '.wav', '.flac']:
-                            if os.path.exists(base_path + ext):
-                                file_path = base_path + ext
-                                break
-
-                        thumb_path = ""
-                        for ext in ['.webp', '.jpg', '.png', '.jpeg']:
-                            if os.path.exists(base_path + ext):
-                                thumb_path = base_path + ext
-                                break
-
-                        if file_path:
-                            cursor.execute("""
-                                INSERT INTO tracks (title, artist, file_path, thumbnail_path, genre, duration)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                                ON CONFLICT(file_path) DO UPDATE SET
-                                    title=excluded.title,
-                                    artist=excluded.artist,
-                                    thumbnail_path=excluded.thumbnail_path,
-                                    duration=excluded.duration
-                            """, (title, artist, file_path, thumb_path, None, duration))
-                            logged += 1
-                            print(f"[*] Logged {media_type} to DB: {title}")
+                        cursor.execute("""
+                            INSERT INTO tracks (title, artist, file_path, thumbnail_path, genre, duration)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(file_path) DO UPDATE SET
+                                title=excluded.title,
+                                artist=excluded.artist,
+                                thumbnail_path=excluded.thumbnail_path,
+                                duration=excluded.duration
+                        """, (title, artist, file_path, thumb_path, None, duration))
+                        logged_titles.append(title)
+                        print(f"[*] Logged {media_type} to DB: {title}")
                     conn.commit()
 
-                if logged == 0:
-                    notify_failed(query, "Search matched but nothing landed on disk - check logs/fetcher.log")
+                if not logged_titles:
+                    print(f"[!] Download of '{query}' produced no loggable files")
+                    notify_failed(query, "Files downloaded but none could be logged - check logs/fetcher.log")
                 else:
                     sync_downloads()
                     ui_pub.send_json({"type": "download_complete"})
+                    # Chat confirmation - speak:false so TTS stays quiet (status message)
+                    ui_pub.send_json({
+                        "type": "chat_reply",
+                        "value": f"✅ Downloaded {len(logged_titles)} track(s): "
+                                 f"{', '.join(logged_titles[:3])}"
+                                 + ("…" if len(logged_titles) > 3 else ""),
+                        "speak": False,
+                    })
 
         except Exception as e:
             print(f"[!] Fetcher Error: {e}")
