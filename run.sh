@@ -7,6 +7,10 @@ cd "$DIR"
 # Set PYTHONPATH so absolute imports work
 export PYTHONPATH="$DIR/src:$PYTHONPATH"
 
+# Deno: JS runtime required by yt-dlp's EJS challenge solver.
+# Injected here so workers get it no matter which shell launched run.sh.
+export PATH="$HOME/.deno/bin:$PATH"
+
 # Unbuffered Python output -> log lines appear immediately, not in chunks
 export PYTHONUNBUFFERED=1
 

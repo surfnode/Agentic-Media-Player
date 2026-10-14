@@ -134,6 +134,14 @@ def start_fetcher_worker():
     print(f"[*] yt-dlp: client ladder {CLIENT_LADDER} | cookies: {cookie_note} | "
           f"yt-dlp {yt_dlp.version.__version__}")
 
+    import shutil
+    deno_path = shutil.which("deno")
+    if deno_path:
+        print(f"[*] JS runtime (deno): {deno_path}")
+    else:
+        print("[!] DENO NOT FOUND in PATH - YouTube downloads WILL FAIL "
+              "(EJS challenge unsolvable). Fix: run.sh must export $HOME/.deno/bin")
+
     def notify_failed(query, reason):
         ui_pub.send_json({"type": "download_failed", "query": query, "reason": reason})
 
