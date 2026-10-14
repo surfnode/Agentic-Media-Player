@@ -4,7 +4,9 @@ from litellm import completion
 import sys
 import os
 import re
+import html
 import sqlite3
+import requests
 from pathlib import Path
 
 try:
@@ -17,9 +19,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from agentic_player.agent.schemas import AgentResponse, Command
 from agentic_player.core.settings import load_settings
 
-# Two instructor clients: JSON mode (native response_format - OpenAI,
-# Ollama, most OpenAI-compatible servers) and TOOLS mode (function calling -
-# the portable path for Anthropic, which has no response_format).
+# Two instructor clients: JSON mode (OpenAI, Ollama, most OpenAI-compatible
+# servers) and TOOLS mode (the portable path for Anthropic).
 client_json = instructor.from_litellm(completion, mode=instructor.Mode.JSON)
 client_tools = instructor.from_litellm(completion, mode=instructor.Mode.TOOLS)
 
@@ -27,18 +28,61 @@ PROVIDER_NAMES = {"ollama": "Ollama (local)", "openai": "OpenAI",
                   "anthropic": "Anthropic (Claude)", "custom": "Custom endpoint"}
 
 # Filler words that must never reach yt-dlp as part of a search query.
-# Deliberately excludes 'song' (song titles contain it, e.g. "Song 2").
 _QUERY_FILLER = {"playlist", "playlists", "songs", "album", "albums"}
 
 
 def sanitize_query(q):
-    """Belt-and-suspenders cleanup on top of the LLM's own discipline:
-    drop filler words the model was told to leave out anyway."""
+    """Belt-and-suspenders cleanup on top of the LLM's own discipline."""
     words = [w for w in (q or "").split()
              if w.lower().strip(".,!?\"'()") not in _QUERY_FILLER]
     out = " ".join(words).strip()
     return out or (q or "").strip()
 
+
+# ---------------- Lyrics (LRCLIB - free, no API key) ----------------
+
+LRCLIB_HEADERS = {"User-Agent": "AgenticMediaPlayer/1.0 (github.com/surfnode/Agentic-Media-Player)"}
+
+_LYRICS_NOISE = r"(?:official|video|audio|vivo|live|hd|lyrics?|remaster(?:ed)?|4k|sub\s?español)"
+
+
+def clean_for_lyrics(s):
+    """Strip YouTube-title noise so 'Song (Official Audio [HD])' matches."""
+    if not s:
+        return ""
+    s = re.sub(r"\(" + _LYRICS_NOISE + r"[^)]*\)", "", s, flags=re.I)
+    s = re.sub(r"\[" + _LYRICS_NOISE + r"[^\]]*\]", "", s, flags=re.I)
+    return s.strip()
+
+
+def fetch_lyrics(artist, title):
+    """Lyrics from lrclib.net. Exact lookup first (needs artist), then fuzzy
+    search. Returns plain lyrics text or None."""
+    title_c = clean_for_lyrics(title)
+    artist_c = clean_for_lyrics(artist) if artist else ""
+    try:
+        if artist_c and title_c:
+            r = requests.get("https://lrclib.net/api/get",
+                             params={"artist_name": artist_c, "track_name": title_c},
+                             headers=LRCLIB_HEADERS, timeout=10)
+            if r.ok:
+                data = r.json()
+                if data.get("plainLyrics"):
+                    return data["plainLyrics"].strip()
+        if title_c:
+            r = requests.get("https://lrclib.net/api/search",
+                             params={"q": f"{title_c} {artist_c}".strip()},
+                             headers=LRCLIB_HEADERS, timeout=10)
+            if r.ok:
+                for item in r.json()[:5]:
+                    if item.get("plainLyrics"):
+                        return item["plainLyrics"].strip()
+    except Exception as e:
+        print(f"[!] Lyrics fetch error: {e}")
+    return None
+
+
+# ---------------- LLM provider plumbing (unchanged) ----------------
 
 def build_llm_call(s):
     """Turn the settings dict into litellm create() kwargs for the active provider."""
@@ -51,14 +95,14 @@ def build_llm_call(s):
     if provider == "openai":
         return {
             "model": f"openai/{(s.get('llm_model_openai') or 'gpt-4o-mini').strip()}",
-            "api_key": (s.get("llm_api_key_openai") or "").strip(),
+            "api_key": (s.get("llm_api_key_openai') or "").strip(),
         }
     if provider == "anthropic":
         return {
             "model": f"anthropic/{(s.get('llm_model_anthropic') or 'claude-sonnet-4').strip()}",
-            "api_key": (s.get("llm_api_key_anthropic") or "").strip(),
+            "api_key": (s.get("llm_api_key_anthropic') or "").strip(),
         }
-    # custom: any OpenAI-compatible endpoint (ALEPH Cloud, OpenRouter, Groq, LM Studio...)
+    # custom: any OpenAI-compatible endpoint
     model = (s.get("llm_model_custom") or "").strip()
     if "/" not in model:
         model = f"openai/{model}"
@@ -99,6 +143,12 @@ def start_router():
     config_socket.connect("tcp://127.0.0.1:5561")
     config_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
+    # Live player events (port 5563) - we only care about track_changed,
+    # which tells us what's currently playing.
+    progress_sub = context.socket(zmq.SUB)
+    progress_sub.connect("tcp://127.0.0.1:5563")
+    progress_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+
     fetch_socket = context.socket(zmq.PUSH)
     fetch_socket.connect("tcp://127.0.0.1:5556")
 
@@ -111,6 +161,7 @@ def start_router():
     poller = zmq.Poller()
     poller.register(in_socket, zmq.POLLIN)
     poller.register(config_socket, zmq.POLLIN)
+    poller.register(progress_sub, zmq.POLLIN)
 
     print("[*] Agent Router started. Listening on Port 5555...")
 
@@ -119,39 +170,114 @@ def start_router():
     print(f"[*] Router LLM: {PROVIDER_NAMES.get(llm_cfg.get('llm_provider'), '?')} | {call.get('model')}"
           f" | web_search={llm_cfg.get('web_search_enabled', True)}")
 
+    # ---------- Personality ----------
     system_prompt = (
-        "You are the conversational intelligence layer of a local media player.\n"
-        "CRITICAL RULES:\n"
-        "1. DOWNLOADS: Three clarifications, in this order of importance:\n"
-        "   a) FORMAT: if the user did not state 'audio' or 'video', leave media_type null and ask.\n"
-        "   b) COUNT: if the request implies multiple tracks (playlist, 'some songs', 'top 5', an "
-        "album, an artist's music) but they gave NO number, leave count null and ask how many "
-        "songs they want. A clearly single-song request gets no count question.\n"
-        "   c) CLEAN QUERY: when issuing the download command, put ONLY the artist or song name "
-        "in query - never words like 'playlist', 'songs', 'album', and never numbers (numbers "
-        "belong in count).\n"
-        "2. PLAYBACK: If the user asks to play music (e.g., 'play Bob Marley'), DO NOT ask which "
-        "specific song. Issue the 'play' action WITH the artist's name in the query field immediately. "
-        "The system will auto-select a matching local file.\n"
-        "3. SHOWS: If they ask about concerts or live music, trigger 'search_shows'.\n"
-        "4. TRANSPORT: 'next'/'prev' skip tracks, 'shuffle' toggles shuffle, 'pause'/'stop' control "
-        "playback. These need no query.\n\n"
+        "You are the soul of a local media player - a warm, music-obsessed friend who "
+        "happens to control the stereo. You chat naturally, know a lot about artists, "
+        "albums, songs and scenes, and you have opinions. You are NOT a command parser: "
+        "many turns are pure conversation and should produce NO commands at all.\n\n"
+        "WHAT YOU CAN DO (issue as commands only when clearly asked):\n"
+        "- play / pause / stop / next / prev / shuffle - playback control. 'play' with a "
+        "query plays from the local library.\n"
+        "- download - fetch music from YouTube. If the user didn't say 'audio' or 'video', "
+        "ask. If they want multiple tracks (playlist, 'some songs') but gave no number, ask "
+        "how many. The query must be ONLY the artist or song name - never 'playlist'/'songs'/"
+        "numbers (numbers go in count).\n"
+        "- lyrics - fetch song lyrics. No query = the currently playing track. A query can "
+        "be 'artist - song' or just a song title. When you use it, keep your spoken reply "
+        "short ('Let me pull those up.').\n"
+        "- search_shows - concert and tour listings for an artist.\n\n"
+        "HOW TO TALK:\n"
+        "- Warm, conversational, a little personality. Short paragraphs, not robot-speak.\n"
+        "- Asked about an artist, song, genre or era? Just talk about it - no command. "
+        "Share eras, collaborations, what makes them interesting. If you don't know "
+        "something, say so honestly.\n"
+        "- Confirm commands naturally ('On it - queuing Juan Gabriel.').\n"
+        "- Spoken replies are read aloud by TTS - keep them reasonably short.\n\n"
         "EXAMPLES:\n"
-        "- User: 'download 10 songs from Residente as audio'\n"
-        "  Action: download (query: 'Residente', media_type: 'audio', count: 10) | "
-        "Reply: 'Downloading 10 Residente songs as audio.'\n"
-        "- User: 'download the Juan Gabriel playlist'\n"
-        "  Reply: 'Audio or video, and how many songs?' (both null until they answer)\n"
-        "- User: 'download Bohemian Rhapsody as audio'\n"
-        "  Action: download (query: 'Bohemian Rhapsody', media_type: 'audio', no count)\n"
-        "- User: 'skip this song' -> Action: next | Reply: 'Skipping.'\n"
-        "- User: 'turn on shuffle' -> Action: shuffle | Reply: 'Shuffle mode on.'\n"
+        "- 'who is Dope Lemon?' -> conversation about Angus Stone's side project, no commands.\n"
+        "- 'what do you think of Residente?' -> your honest take on his wordplay and Calle 13 "
+        "roots, no commands.\n"
+        "- 'play residente' -> play (query 'Residente') | 'On it.'\n"
+        "- 'download 5 residente songs as audio' -> download (query 'Residente', media_type "
+        "'audio', count 5).\n"
+        "- 'what are the lyrics to this song?' -> lyrics (no query) | 'Let me pull those up.'\n"
+        "- 'lyrics to Bohemian Rhapsody' -> lyrics (query 'Bohemian Rhapsody') | 'Fetching those now.'\n"
+        "- 'skip this' -> next | 'Skipping.'\n"
     )
 
     conversation_history = [{"role": "system", "content": system_prompt}]
 
+    # ---------- Live state: what's playing ----------
+    now_playing = {"title": None, "artist": None, "file_path": None}
+    lyrics_cache = {}
+
+    def update_now_playing(file_path):
+        now_playing["file_path"] = file_path
+        title = os.path.basename(file_path)
+        artist = None
+        if os.path.exists("agentic_player.db"):
+            try:
+                with sqlite3.connect("agentic_player.db") as conn:
+                    row = conn.execute(
+                        "SELECT title, artist FROM tracks WHERE file_path=?",
+                        (file_path,)).fetchone()
+                    if row:
+                        title = row[0] or title
+                        artist = row[1] or None
+            except Exception:
+                pass
+        now_playing["title"] = title
+        now_playing["artist"] = artist
+
+    def build_messages():
+        """Swap in a system prompt that knows what's currently playing, so
+        'what's playing' / 'lyrics to this' / 'who sings this' just work."""
+        content = system_prompt
+        if now_playing.get("title"):
+            line = f"\n\nCURRENT CONTEXT (live):\n- Now playing: \"{now_playing['title']}\""
+            if now_playing.get("artist"):
+                line += f" by {now_playing['artist']}"
+            line += ("\n- 'this song' / 'the current track' refers to it; questions like "
+                     "'what's playing' or 'lyrics to this' need no query.")
+            content += line
+        return [{"role": "system", "content": content}] + conversation_history[1:]
+
+    def show_lyrics(title, artist):
+        key = (artist or "", title or "")
+        if key in lyrics_cache:
+            lyrics = lyrics_cache[key]
+        else:
+            lyrics = fetch_lyrics(artist, title)
+            lyrics_cache[key] = lyrics
+        header = f"🎤 <b>{html.escape(title or '?')}</b>"
+        if artist:
+            header += f" — {html.escape(artist)}"
+        if lyrics:
+            body = html.escape(lyrics).replace("\n", "<br>")
+            ui_pub_socket.send_json({"type": "chat_reply",
+                                     "value": f"{header}<br><br>{body}",
+                                     "speak": False})
+            print(f"[*] Lyrics shown: {title}")
+        else:
+            ui_pub_socket.send_json({"type": "chat_reply",
+                                     "value": f"{header}<br><i>Couldn't find lyrics for this one - "
+                                              f"LRCLIB has no match.</i>",
+                                     "speak": False})
+
     while True:
         socks = dict(poller.poll(100))
+
+        # Player events - keep current-track state fresh
+        if progress_sub in socks:
+            try:
+                message = progress_sub.recv_json(flags=zmq.NOBLOCK)
+                if message.get("type") == "track_changed":
+                    fp = message.get("file_path")
+                    if fp:
+                        update_now_playing(fp)
+            except zmq.Again:
+                pass
 
         if config_socket in socks:
             msg = config_socket.recv_json()
@@ -172,7 +298,6 @@ def start_router():
             print(f"\n[User Says]: {user_text}")
 
             conversation_history.append({"role": "user", "content": user_text})
-
             if len(conversation_history) > 13:
                 conversation_history = [conversation_history[0]] + conversation_history[-12:]
 
@@ -187,7 +312,7 @@ def start_router():
                     response = client.chat.completions.create(
                         model=call["model"],
                         response_model=AgentResponse,
-                        messages=conversation_history,
+                        messages=build_messages(),
                         **{k: v for k, v in call.items() if k != "model" and v},
                     )
                 except Exception as e:
@@ -238,6 +363,21 @@ def start_router():
                         print(f"[Agent -> Fetcher]: {payload}")
                         fetch_socket.send_json(payload)
 
+                elif cmd.action == "lyrics":
+                    if cmd.query:
+                        q = cmd.query.strip()
+                        if " - " in q:
+                            artist_q, title_q = [p.strip() for p in q.split(" - ", 1)]
+                            show_lyrics(title_q, artist_q)
+                        else:
+                            show_lyrics(q, None)
+                    elif now_playing.get("title"):
+                        show_lyrics(now_playing["title"], now_playing["artist"])
+                    else:
+                        ui_pub_socket.send_json({"type": "chat_reply",
+                                                 "value": "Nothing is playing right now - name a song and I'll find its lyrics.",
+                                                 "speak": False})
+
                 elif cmd.action == "play":
                     if cmd.query:
                         db_path = "agentic_player.db"
@@ -246,18 +386,19 @@ def start_router():
                             try:
                                 with sqlite3.connect(db_path) as conn:
                                     cursor = conn.cursor()
-                                    cursor.execute("SELECT file_path FROM tracks WHERE title LIKE ? OR file_path LIKE ? LIMIT 1", (f"%{cmd.query}%", f"%{cmd.query}%"))
+                                    cursor.execute("SELECT file_path FROM tracks WHERE title LIKE ? OR file_path LIKE ? LIMIT 1",
+                                                   (f"%{cmd.query}%", f"%{cmd.query}%"))
                                     row = cursor.fetchone()
                                     if row:
                                         found_file = row[0]
                             except Exception as e:
                                 pass
-
                         if found_file:
                             print(f"[Agent -> Player]: Found matching file: {os.path.basename(found_file)}")
                             play_socket.send_json({"action": "play", "file_path": found_file})
                         else:
-                            ui_pub_socket.send_json({"type": "chat_reply", "value": f"<i>I couldn't find '{cmd.query}' locally. Should I download it?</i>"})
+                            ui_pub_socket.send_json({"type": "chat_reply",
+                                                     "value": f"<i>I couldn't find '{cmd.query}' locally. Should I download it?</i>"})
                     else:
                         play_socket.send_json({"action": "play"})
 
