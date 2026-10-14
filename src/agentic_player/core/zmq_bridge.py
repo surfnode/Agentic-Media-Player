@@ -10,6 +10,7 @@ class ZMQBridge(QThread):
     download_failed = Signal(str)
     chat_received = Signal(str)
     track_changed = Signal(str)
+    queue_updated = Signal(list, str)
 
     def __init__(self):
         super().__init__()
@@ -79,6 +80,8 @@ class ZMQBridge(QThread):
                         )
                     elif msg_type == 'track_changed':
                         self.track_changed.emit(message.get('file_path', ''))
+                    elif msg_type == 'queue_update':
+                        self.queue_updated.emit(message.get('files', []), message.get('current', ''))
                     elif msg_type == 'state':
                         self.state_changed.emit(message)
                 except zmq.Again:

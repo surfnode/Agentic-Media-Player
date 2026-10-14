@@ -73,6 +73,15 @@ def start_player_worker():
         player.play()
         print(f"[*] VLC Playing: {os.path.basename(file_path)}")
         progress_pub.send_json({"type": "track_changed", "file_path": file_path})
+        # Live queue: the UI fills its Up Next row from this on every track
+        # change (covers auto-advance + agent-started playback too).
+        if queue:
+            idx = queue.index(file_path) if file_path in queue else 0
+            progress_pub.send_json({
+                "type": "queue_update",
+                "files": queue[idx:],
+                "current": file_path,
+            })
 
     def set_current_and_play(idx):
         nonlocal current_track_idx

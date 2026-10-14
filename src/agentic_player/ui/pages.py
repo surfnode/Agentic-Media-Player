@@ -3,7 +3,8 @@ playlist management, and the Now Playing stage."""
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QScrollArea,
                                 QLabel, QListWidget, QTabWidget, QTreeWidget, QTreeWidgetItem,
-                                QMenu, QInputDialog, QMessageBox, QPushButton, QStackedWidget)
+                                QMenu, QInputDialog, QMessageBox, QPushButton, QStackedWidget,
+                                QListWidgetItem)
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QPixmap
 from agentic_player.core.db_manager import DatabaseManager
@@ -421,36 +422,45 @@ class ArtVideoStage(QWidget):
 
 class NowPlayingPage(QWidget):
     """Big stage: video surface (VLC embeds here), album art, and Up Next."""
+    upnext_play_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        outer = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(16)
+        outer.setSpacing(12)
 
-        left = QVBoxLayout()
+        # Stage (video / album art)
         self.stage = ArtVideoStage()
-        self.stage.setMinimumHeight(260)
-        left.addWidget(self.stage, 3)
+        self.stage.setMinimumHeight(320)
+        outer.addWidget(self.stage, 4)
+
+        # Title / artist
         self.title_label = QLabel("Nothing playing")
         self.title_label.setObjectName("nowTitle")
         self.title_label.setWordWrap(True)
         self.artist_label = QLabel("")
         self.artist_label.setObjectName("cardSub")
         self.artist_label.setWordWrap(True)
-        left.addWidget(self.title_label)
-        left.addWidget(self.artist_label)
-        outer.addLayout(left, 3)
+        outer.addWidget(self.title_label)
+        outer.addWidget(self.artist_label)
 
-        right_box = QVBoxLayout()
+        # Up Next - horizontal scrolling row under the video (like YT).
+        # No vertical split competing with the agent dock; always readable.
         up_header = QLabel("Up Next")
         up_header.setObjectName("sectionHeader")
-        right_box.addWidget(up_header)
+        outer.addWidget(up_header)
         self.up_next = QListWidget()
         self.up_next.setObjectName("upNext")
+        self.up_next.setFlow(QListWidget.LeftToRight)
+        self.up_next.setWrapping(False)
+        self.up_next.setFixedHeight(64)
+        self.up_next.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.up_next.setWordWrap(True)
-        right_box.addWidget(self.up_next, 1)
-        outer.addLayout(right_box, 1)
+        self.up_next.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.up_next.currentRowChanged.connect(self._upnext_clicked_row)
+        self._upnext_files = []
+        outer.addWidget(self.up_next)
 
     @property
     def video_surface(self):
@@ -467,11 +477,29 @@ class NowPlayingPage(QWidget):
             else:
                 self.stage.art_label.clear()
 
-    def set_queue(self, files, start):
+    def set_queue(self, files, start=None):
+        """Fill Up Next from the play context. start=None = live update from
+        the player (highlight current, list the rest after it)."""
         self.up_next.clear()
-        if files and start in files:
-            idx = files.index(start)
-            for f in files[idx + 1:]:
-                self.up_next.addItem(os.path.basename(f))
-        if self.up_next.count() == 0:
-            self.up_next.addItem("(queue managed by the player)")
+        self._upnext_files = [f for f in (files or []) if f]
+        if not self._upnext_files:
+            return
+        if start and start in self._upnext_files:
+            ordered = self._upnext_files[self._upnext_files.index(start):]
+        else:
+            ordered = self._upnext_files
+        for f in ordered:
+            item = QListWidgetItem(os.path.basename(f))
+            self.up_next.addItem(item)
+
+    def _upnext_clicked_row(self, row):
+        """Click a row -> play that file (guard against signal storms)."""
+        if row < 0 or row >= len(self._upnext_files):
+            return
+        target = self._upnext_files[row]
+        self.up_next.blockSignals(True)
+        self.up_next.setCurrentRow(-1)
+        self.up_next.blockSignals(False)
+        # emit play for a single file - main.py wires this to the player
+        if hasattr(self, "upnext_play_requested"):
+            self.upnext_play_requested.emit(target)
