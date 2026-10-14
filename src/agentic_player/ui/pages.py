@@ -408,9 +408,10 @@ class ArtVideoStage(QWidget):
         self.art_label.setAlignment(Qt.AlignCenter)
         self.stack.addWidget(self.art_label)
 
-        self.video_surface = QLabel("video")
+        self.video_surface = QWidget()
         self.video_surface.setObjectName("stageVideo")
-        self.video_surface.setAlignment(Qt.AlignCenter)
+        self.video_surface.setAttribute(Qt.WA_NativeWindow)
+        self.video_surface.setMinimumSize(320, 180)
         self.stack.addWidget(self.video_surface)
         self.stack.setCurrentIndex(0)
 
@@ -429,6 +430,7 @@ class NowPlayingPage(QWidget):
 
         left = QVBoxLayout()
         self.stage = ArtVideoStage()
+        self.stage.setMinimumHeight(260)
         left.addWidget(self.stage, 3)
         self.title_label = QLabel("Nothing playing")
         self.title_label.setObjectName("nowTitle")
