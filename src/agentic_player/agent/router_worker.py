@@ -95,12 +95,12 @@ def build_llm_call(s):
     if provider == "openai":
         return {
             "model": f"openai/{(s.get('llm_model_openai') or 'gpt-4o-mini').strip()}",
-            "api_key": (s.get("llm_api_key_openai') or "").strip(),
+            "api_key": (s.get('llm_api_key_openai') or "").strip(),
         }
     if provider == "anthropic":
         return {
             "model": f"anthropic/{(s.get('llm_model_anthropic') or 'claude-sonnet-4').strip()}",
-            "api_key": (s.get("llm_api_key_anthropic') or "").strip(),
+            "api_key": (s.get('llm_api_key_anthropic') or "").strip(),
         }
     # custom: any OpenAI-compatible endpoint
     model = (s.get("llm_model_custom") or "").strip()

@@ -58,6 +58,9 @@ class ZMQBridge(QThread):
                     msg_type = message.get('type')
                     if msg_type == 'download_complete':
                         self.download_complete.emit()
+                    elif msg_type == 'chat_reply':
+                        # fetcher status messages (download confirmations)
+                        self.chat_received.emit(message.get('value', ''))
                     elif msg_type == 'download_failed':
                         reason = message.get('reason') or message.get('query') or 'unknown error'
                         self.download_failed.emit(f"{message.get('query', '?')}: {reason}")
