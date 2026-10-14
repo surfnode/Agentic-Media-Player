@@ -163,6 +163,22 @@ def start_fetcher_worker():
     def notify_failed(query, reason):
         ui_pub.send_json({"type": "download_failed", "query": query, "reason": reason})
 
+    _prog_seen = set()
+
+    def progress_hook(d):
+        """One line when a file starts, one when it lands - multi-track
+        downloads show life in the log instead of looking dead."""
+        status = d.get('status')
+        if status == 'downloading':
+            key = d.get('info_dict', {}).get('id') or d.get('filename')
+            if key and key not in _prog_seen:
+                _prog_seen.add(key)
+                t = (d.get('info_dict') or {}).get('title') or d.get('filename') or '?'
+                print(f"    [dl] starting: {str(t)[:60]}")
+        elif status == 'finished':
+            fn = os.path.basename(d.get('filename') or '?')
+            print(f"    [dl] finished: {fn}")
+
     def run_download(query, media_type, count):
         if query.startswith("http"):
             search = query
@@ -182,6 +198,7 @@ def start_fetcher_worker():
                 'extractor_args': {'youtube': [f'player_client={client}']},
             }
             opts.update(cookie_opts)
+            opts['progress_hooks'] = [progress_hook]
             if media_type == "audio":
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'] = [{
@@ -225,6 +242,12 @@ def start_fetcher_worker():
 
             if action == "download" and query:
                 print(f"\n[*] Initiating {media_type.upper()} download: {query!r} (count={count})")
+                if count and count > 1:
+                    ui_pub.send_json({
+                        "type": "chat_reply",
+                        "value": "\u23f3 Downloading " + str(count) + " tracks for '" + query + "' - this takes several minutes. Keep the app open; progress is in logs/fetcher.log.",
+                        "speak": False,
+                    })
 
                 entries, last_err, winner = run_download(query, media_type, count)
 

@@ -381,6 +381,8 @@ class AgenticPlayerWindow(QMainWindow):
         self.zmq_bridge.progress_updated.connect(self.update_progress)
         self.zmq_bridge.mic_volume_updated.connect(self.update_mic_volume)
         self.zmq_bridge.track_changed.connect(self.on_track_changed)
+        self.zmq_bridge.queue_updated.connect(self.on_queue_updated)
+        self.now_playing_page.upnext_play_requested.connect(self.on_upnext_play)
         self.zmq_bridge.state_changed.connect(self.on_player_state)
 
     # ---------------- UI construction ----------------
@@ -711,6 +713,18 @@ class AgenticPlayerWindow(QMainWindow):
     def on_player_state(self, msg):
         state = msg.get("state", "stopped")
         self.play_button.setText("⏸" if state == "playing" else "▶")
+
+    def on_queue_updated(self, files, current):
+        """Live Up Next: fired by the player on every track change."""
+        self._play_context = list(files)
+        self.now_playing_page.set_queue(files, None)
+
+    def on_upnext_play(self, file_path):
+        files = getattr(self, "_play_context", [])
+        if files and file_path in files:
+            self.send_play_collection_command(files, file_path)
+        elif os.path.exists(file_path):
+            self.cmd_socket.send_json({"action": "play", "file_path": file_path})
 
     def on_track_changed(self, file_path):
         if not file_path:
